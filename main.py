@@ -30,16 +30,19 @@ from modules.report_generator import ReportGenerator
 
 console = Console()
 
-BANNER = """
-╦  ╦╦ ╦╦  ╔╗╔╔═╗╔═╗╔═╗╔╗╔  ╔═╗╦═╗╔═╗
-╚╗╔╝║ ║║  ║║║╚═╗║  ╠═╣║║║  ╠═╝╠╦╝║ ║
- ╚╝ ╚═╝╩═╝╝╚╝╚═╝╚═╝╩ ╩╝╚╝  ╩  ╩╚═╚═╝
-"""
-
 def print_banner():
-    console.print(BANNER, style="bold cyan")
-    console.print("  [dim]Outil de scan de vulnérabilités professionnel v1.0[/dim]")
-    console.print("  [dim]Usage légal uniquement — Autorisé sur vos propres systèmes[/dim]\n")
+    console.print()
+    console.print("  [bold cyan]██╗   ██╗██╗   ██╗██╗     ███╗   ██╗███████╗ ██████╗ █████╗ ███╗  ██╗[/bold cyan]")
+    console.print("  [bold cyan]██║   ██║██║   ██║██║     ████╗  ██║██╔════╝██╔════╝██╔══██╗████╗ ██║[/bold cyan]")
+    console.print("  [bold cyan]██║   ██║██║   ██║██║     ██╔██╗ ██║███████╗██║     ███████║██╔██╗██║[/bold cyan]")
+    console.print("  [bold cyan]╚██╗ ██╔╝██║   ██║██║     ██║╚██╗██║╚════██║██║     ██╔══██║██║╚████║[/bold cyan]")
+    console.print("  [bold cyan] ╚████╔╝ ╚██████╔╝███████╗██║ ╚████║███████║╚██████╗██║  ██║██║ ╚███║[/bold cyan]")
+    console.print("  [bold cyan]  ╚═══╝   ╚═════╝ ╚══════╝╚═╝  ╚═══╝╚══════╝ ╚═════╝╚═╝  ╚═╝╚═╝  ╚══╝[/bold cyan]")
+    console.print()
+    console.print("  [bold white]          P R O[/bold white]   [dim]│[/dim]   [bold cyan]v1.0[/bold cyan]   [dim]│[/dim]   [dim]by[/dim] [bold white]hawkz[/bold white]")
+    console.print("  [dim]  ─────────────────────────────────────────────────────────────[/dim]")
+    console.print("  [dim]  Outil d'audit de sécurité automatisé — Usage légal uniquement[/dim]")
+    console.print()
 
 def parse_args():
     parser = argparse.ArgumentParser(

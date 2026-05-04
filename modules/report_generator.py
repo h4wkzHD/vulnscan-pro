@@ -1,1467 +1,1345 @@
 """
 Module: report_generator.py
-Génération de rapports PDF professionnels style pentest
+Génération de rapports PDF ultra-professionnels style pentest cabinet
+Design premium — by hawkz
 """
 
 import os
 from datetime import datetime
-from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.units import mm, cm
+from reportlab.lib.units import mm
 from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT, TA_JUSTIFY
+from reportlab.lib.colors import HexColor
 from reportlab.platypus import (
-    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
-    PageBreak, HRFlowable, KeepTogether, ListFlowable, ListItem
+    BaseDocTemplate, PageTemplate, Frame,
+    Paragraph, Spacer, Table, TableStyle,
+    PageBreak, KeepTogether, HRFlowable
 )
 from reportlab.platypus.flowables import Flowable
-from reportlab.pdfgen import canvas as pdfcanvas
-from reportlab.lib.colors import HexColor, Color
-
-
-# ─── PALETTE DE COULEURS ──────────────────────────────────────────────────────
-DARK_BG = HexColor("#0D1117")
-DARK_SURFACE = HexColor("#161B22")
-ACCENT_CYAN = HexColor("#00D4FF")
-ACCENT_BLUE = HexColor("#1F6FEB")
-ACCENT_GREEN = HexColor("#3FB950")
-ACCENT_ORANGE = HexColor("#D29922")
-ACCENT_RED = HexColor("#F85149")
-ACCENT_PURPLE = HexColor("#BC8CFF")
-
-TEXT_PRIMARY = HexColor("#E6EDF3")
-TEXT_SECONDARY = HexColor("#8B949E")
-TEXT_MUTED = HexColor("#484F58")
-
-SEVERITY_COLORS = {
-    "CRITICAL": HexColor("#FF0000"),
-    "HIGH": HexColor("#FF4500"),
-    "MEDIUM": HexColor("#FFA500"),
-    "LOW": HexColor("#32CD32"),
-    "INFO": HexColor("#1E90FF"),
-}
-
-SEVERITY_BG_COLORS = {
-    "CRITICAL": HexColor("#2D0000"),
-    "HIGH": HexColor("#2D1000"),
-    "MEDIUM": HexColor("#2D2000"),
-    "LOW": HexColor("#002D00"),
-    "INFO": HexColor("#00002D"),
-}
+from reportlab.lib.styles import ParagraphStyle
+from reportlab.pdfgen.canvas import Canvas
 
 W, H = A4
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# PALETTE
+# ═══════════════════════════════════════════════════════════════════════════════
+C = {
+    "bg":              HexColor("#0A0E17"),
+    "surface":         HexColor("#111827"),
+    "surface2":        HexColor("#1A2234"),
+    "border":          HexColor("#1E2D45"),
+    "accent":          HexColor("#00C2FF"),
+    "accent2":         HexColor("#0066CC"),
+    "green":           HexColor("#00D68F"),
+    "orange":          HexColor("#FF8C00"),
+    "red":             HexColor("#FF3B5C"),
+    "text":            HexColor("#F0F4FF"),
+    "text2":           HexColor("#7A8BA8"),
+    "text3":           HexColor("#3A4A60"),
+    "sev_critical":    HexColor("#FF3B5C"),
+    "sev_high":        HexColor("#FF6B35"),
+    "sev_medium":      HexColor("#FFB800"),
+    "sev_low":         HexColor("#00D68F"),
+    "sev_info":        HexColor("#00C2FF"),
+    "sev_critical_bg": HexColor("#2A0A10"),
+    "sev_high_bg":     HexColor("#2A1200"),
+    "sev_medium_bg":   HexColor("#2A2000"),
+    "sev_low_bg":      HexColor("#002A18"),
+    "sev_info_bg":     HexColor("#002030"),
+}
 
-class ColoredBox(Flowable):
-    """Boîte colorée personnalisée."""
-    def __init__(self, width, height, fill_color, stroke_color=None, radius=3):
-        Flowable.__init__(self)
-        self.width = width
-        self.height = height
-        self.fill_color = fill_color
-        self.stroke_color = stroke_color
-        self.radius = radius
+SEV_COLOR = {
+    "CRITICAL": C["sev_critical"], "HIGH": C["sev_high"],
+    "MEDIUM":   C["sev_medium"],   "LOW":  C["sev_low"],
+    "INFO":     C["sev_info"],
+}
+SEV_BG = {
+    "CRITICAL": C["sev_critical_bg"], "HIGH": C["sev_high_bg"],
+    "MEDIUM":   C["sev_medium_bg"],   "LOW":  C["sev_low_bg"],
+    "INFO":     C["sev_info_bg"],
+}
+SEV_LABEL = {
+    "CRITICAL": "CRITIQUE", "HIGH": "ÉLEVÉ",
+    "MEDIUM":   "MOYEN",    "LOW":  "FAIBLE",
+    "INFO":     "INFO",
+}
+SEV_ORDER = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "INFO": 4}
 
-    def draw(self):
-        self.canv.setFillColor(self.fill_color)
-        if self.stroke_color:
-            self.canv.setStrokeColor(self.stroke_color)
-            self.canv.roundRect(0, 0, self.width, self.height, self.radius, fill=1, stroke=1)
-        else:
-            self.canv.roundRect(0, 0, self.width, self.height, self.radius, fill=1, stroke=0)
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# HELPERS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def risk_color_for_score(score):
+    if score >= 75: return C["sev_critical"]
+    if score >= 50: return C["sev_high"]
+    if score >= 25: return C["sev_medium"]
+    if score >= 10: return C["sev_low"]
+    return C["sev_info"]
 
 
-class SeverityBadge(Flowable):
-    """Badge de sévérité coloré."""
-    def __init__(self, severity: str, width=60, height=16):
-        Flowable.__init__(self)
+def S(name, **kw):
+    d = dict(fontName="Helvetica", fontSize=9, textColor=C["text2"], leading=13, spaceAfter=3)
+    d.update(kw)
+    return ParagraphStyle(name, **d)
+
+
+STYLES = {
+    "section":    S("section",    fontSize=17, fontName="Helvetica-Bold", textColor=C["accent"],
+                    spaceBefore=18, spaceAfter=10, leading=22),
+    "subsection": S("subsection", fontSize=12, fontName="Helvetica-Bold", textColor=C["text"],
+                    spaceBefore=12, spaceAfter=7, leading=16),
+    "body":       S("body",       fontSize=9,  textColor=C["text2"], leading=14,
+                    spaceAfter=6, alignment=TA_JUSTIFY),
+    "body_bold":  S("body_bold",  fontSize=9,  fontName="Helvetica-Bold", textColor=C["text"], leading=14),
+    "code":       S("code",       fontSize=8,  fontName="Courier", textColor=C["green"],
+                    leading=12, leftIndent=6, spaceAfter=4),
+    "th":         S("th",         fontSize=8,  fontName="Helvetica-Bold", textColor=C["bg"],
+                    alignment=TA_CENTER, leading=11),
+    "td":         S("td",         fontSize=8,  textColor=C["text2"], leading=11),
+    "td_c":       S("td_c",       fontSize=8,  textColor=C["text2"], alignment=TA_CENTER, leading=11),
+    "td_bold":    S("td_bold",    fontSize=8,  fontName="Helvetica-Bold", textColor=C["text"], leading=11),
+    "small":      S("small",      fontSize=7,  textColor=C["text3"], leading=10),
+    "finding_t":  S("finding_t",  fontSize=10, fontName="Helvetica-Bold", textColor=C["text"],
+                    leading=14, spaceAfter=3),
+    "finding_d":  S("finding_d",  fontSize=8.5, textColor=C["text2"], leading=13,
+                    spaceAfter=3, alignment=TA_JUSTIFY),
+    "finding_r":  S("finding_r",  fontSize=8.5, textColor=C["green"], leading=13, spaceAfter=2),
+    "toc_main":   S("toc_main",   fontSize=10, fontName="Helvetica-Bold", textColor=C["text"], leading=18),
+    "toc_sub":    S("toc_sub",    fontSize=9,  textColor=C["text2"], leading=16, leftIndent=8),
+    "label":      S("label",      fontSize=7,  fontName="Helvetica-Bold", textColor=C["text3"], leading=10),
+    "value":      S("value",      fontSize=10, fontName="Helvetica-Bold", textColor=C["text"], leading=14),
+    "disclaimer": S("disclaimer", fontSize=7.5, textColor=C["text3"], leading=11,
+                    alignment=TA_JUSTIFY),
+}
+
+
+def tbl_style(hdr_color=None):
+    hc = hdr_color or C["accent"]
+    return TableStyle([
+        ("BACKGROUND",    (0, 0), (-1, 0),  hc),
+        ("ROWBACKGROUNDS",(0, 1), (-1, -1), [C["surface"], C["surface2"]]),
+        ("TOPPADDING",    (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 8),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 8),
+        ("GRID",  (0, 0), (-1, -1), 0.3, C["border"]),
+        ("BOX",   (0, 0), (-1, -1), 1,   C["border"]),
+        ("VALIGN",(0, 0), (-1, -1), "MIDDLE"),
+    ])
+
+
+def section_header(title, subtitle=None):
+    e = [Spacer(1, 4*mm), Paragraph(title, STYLES["section"])]
+    accent_row = Table([["", ""]], colWidths=[22*mm, W - 52*mm])
+    accent_row.setStyle(TableStyle([
+        ("BACKGROUND",    (0, 0), (0, 0), C["accent"]),
+        ("BACKGROUND",    (1, 0), (1, 0), C["border"]),
+        ("TOPPADDING",    (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 0),
+        ("ROWHEIGHT",     (0, 0), (-1, -1), 2),
+    ]))
+    e.append(accent_row)
+    if subtitle:
+        e += [Spacer(1, 2*mm), Paragraph(subtitle, STYLES["body"])]
+    e.append(Spacer(1, 4*mm))
+    return e
+
+
+def kv_block(items, cols=2):
+    col_w = (W - 30*mm) / cols
+    rows, row = [], []
+    for i, (key, val) in enumerate(items):
+        cell = Table(
+            [[Paragraph(key, STYLES["label"])],
+             [Paragraph(str(val)[:60], STYLES["value"])]],
+            colWidths=[col_w - 6*mm]
+        )
+        cell.setStyle(TableStyle([
+            ("BACKGROUND",    (0, 0), (-1, -1), C["surface2"]),
+            ("TOPPADDING",    (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 8),
+            ("BOX",           (0, 0), (-1, -1), 0.5, C["border"]),
+        ]))
+        row.append(cell)
+        if len(row) == cols or i == len(items) - 1:
+            while len(row) < cols:
+                row.append(Spacer(1, 1))
+            rows.append(row)
+            row = []
+    if not rows:
+        return []
+    t = Table(rows, colWidths=[col_w] * cols, hAlign="LEFT")
+    t.setStyle(TableStyle([
+        ("TOPPADDING",    (0, 0), (-1, -1), 2),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 3),
+    ]))
+    return [t, Spacer(1, 4*mm)]
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CUSTOM FLOWABLES
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class SeverityPill(Flowable):
+    def __init__(self, severity, w=68, h=20):
+        super().__init__()
         self.severity = severity
-        self.width = width
-        self.height = height
+        self.width = w
+        self.height = h
 
     def draw(self):
-        color = SEVERITY_COLORS.get(self.severity, HexColor("#888888"))
-        bg_color = SEVERITY_BG_COLORS.get(self.severity, HexColor("#111111"))
-        self.canv.setFillColor(bg_color)
-        self.canv.roundRect(0, 0, self.width, self.height, 3, fill=1, stroke=0)
-        self.canv.setStrokeColor(color)
-        self.canv.setLineWidth(1)
-        self.canv.roundRect(0, 0, self.width, self.height, 3, fill=0, stroke=1)
-        self.canv.setFillColor(color)
-        self.canv.setFont("Helvetica-Bold", 7)
-        text_width = self.canv.stringWidth(self.severity, "Helvetica-Bold", 7)
-        self.canv.drawString((self.width - text_width) / 2, 4, self.severity)
+        c = self.canv
+        col = SEV_COLOR.get(self.severity, C["text2"])
+        bg  = SEV_BG.get(self.severity, C["surface"])
+        lbl = SEV_LABEL.get(self.severity, self.severity)
+        c.setFillColor(bg)
+        c.roundRect(0, 0, self.width, self.height, 4, fill=1, stroke=0)
+        c.setStrokeColor(col)
+        c.setLineWidth(0.8)
+        c.roundRect(0, 0, self.width, self.height, 4, fill=0, stroke=1)
+        c.setFillColor(col)
+        c.circle(10, self.height / 2, 3, fill=1, stroke=0)
+        c.setFont("Helvetica-Bold", 7.5)
+        c.drawString(18, (self.height - 7.5) / 2 + 1, lbl)
 
 
-class HeaderCanvas:
-    """Canvas personnalisé pour header/footer sur chaque page."""
+class CoverPage(Flowable):
+    def __init__(self, data):
+        super().__init__()
+        self.data = data
+        self.width = W
+        self.height = H
 
-    def __init__(self, doc_data: dict):
-        self.doc_data = doc_data
-        self.target = doc_data.get("target", "")
-        self.company = doc_data.get("company", "")
-        self.scan_date = doc_data.get("scan_date", "")
+    def draw(self):
+        c = self.canv
+        d = self.data
+        target  = d.get("target", "")
+        company = d.get("company", "Confidentiel")
+        auditor = d.get("auditor", "hawkz")
+        risk    = d.get("risk", {})
+        score   = risk.get("score", 0)
+        level   = risk.get("level", "N/A")
+        sc      = d.get("_sev_counts", {})
+        dur     = d.get("scan_duration_seconds", 0)
+        mods    = d.get("modules", {})
+        active_mods = len([m for m in mods.values() if not m.get("skipped") and not m.get("error")])
 
-    def __call__(self, canv, doc):
-        self._draw_header(canv, doc)
-        self._draw_footer(canv, doc)
+        try:
+            dt = datetime.fromisoformat(d.get("scan_date", ""))
+            date_str = dt.strftime("%d %B %Y")
+            time_str = dt.strftime("%H:%M UTC")
+        except Exception:
+            date_str = datetime.now().strftime("%d %B %Y")
+            time_str = datetime.now().strftime("%H:%M UTC")
 
-    def _draw_header(self, canv, doc):
-        if doc.page == 1:
-            return  # Pas de header sur la page de garde
+        rcol = risk_color_for_score(score)
 
-        canv.saveState()
+        # ── Fond ──────────────────────────────────────────────────────────────
+        c.setFillColor(C["bg"])
+        c.rect(0, 0, W, H, fill=1, stroke=0)
 
-        # Fond du header
-        canv.setFillColor(DARK_SURFACE)
-        canv.rect(0, H - 25*mm, W, 25*mm, fill=1, stroke=0)
+        # ── Bande latérale gauche ─────────────────────────────────────────────
+        c.setFillColor(C["surface"])
+        c.rect(0, 0, 8*mm, H, fill=1, stroke=0)
+        c.setFillColor(C["accent"])
+        c.rect(0, 0, 2.5*mm, H, fill=1, stroke=0)
 
-        # Ligne accent
-        canv.setFillColor(ACCENT_CYAN)
-        canv.rect(0, H - 25*mm, W, 1.5, fill=1, stroke=0)
+        # ── Header band ───────────────────────────────────────────────────────
+        c.setFillColor(C["surface"])
+        c.rect(8*mm, H - 50*mm, W - 8*mm, 50*mm, fill=1, stroke=0)
+        c.setFillColor(C["accent"])
+        c.rect(8*mm, H - 50*mm, W - 8*mm, 1.2, fill=1, stroke=0)
 
-        # Logo/Titre
-        canv.setFillColor(ACCENT_CYAN)
-        canv.setFont("Helvetica-Bold", 10)
-        canv.drawString(15*mm, H - 14*mm, "VULNSCAN PRO")
+        # Logo
+        c.setFillColor(C["accent"])
+        c.setFont("Helvetica-Bold", 12)
+        c.drawString(18*mm, H - 16*mm, "VULNSCAN")
+        c.setFillColor(C["text2"])
+        c.setFont("Helvetica", 12)
+        logo_x = 18*mm + c.stringWidth("VULNSCAN", "Helvetica-Bold", 12) + 2
+        c.drawString(logo_x, H - 16*mm, "PRO")
+        c.setFillColor(C["text3"])
+        c.setFont("Helvetica", 7.5)
+        c.drawString(18*mm, H - 22*mm, "by hawkz")
 
-        canv.setFillColor(TEXT_SECONDARY)
-        canv.setFont("Helvetica", 8)
-        canv.drawString(15*mm, H - 20*mm, f"Rapport d'audit de sécurité — {self.target}")
+        # Séparateur vertical header
+        c.setFillColor(C["border"])
+        c.rect(W - 58*mm, H - 44*mm, 0.5, 32*mm, fill=1, stroke=0)
 
-        # Info droite
-        canv.setFillColor(TEXT_SECONDARY)
-        canv.setFont("Helvetica", 8)
-        date_str = datetime.fromisoformat(self.scan_date).strftime("%d/%m/%Y") if self.scan_date else ""
-        canv.drawRightString(W - 15*mm, H - 14*mm, self.company)
-        canv.drawRightString(W - 15*mm, H - 20*mm, date_str)
+        # Date / heure
+        c.setFillColor(C["text2"])
+        c.setFont("Helvetica", 8)
+        c.drawRightString(W - 12*mm, H - 18*mm, date_str)
+        c.drawRightString(W - 12*mm, H - 26*mm, time_str)
+        c.setFillColor(C["text3"])
+        c.setFont("Helvetica-Bold", 7.5)
+        c.drawRightString(W - 12*mm, H - 34*mm, "CONFIDENTIEL")
 
-        canv.restoreState()
+        # ── Titre ─────────────────────────────────────────────────────────────
+        c.setFillColor(C["text"])
+        c.setFont("Helvetica-Bold", 36)
+        c.drawString(18*mm, H - 82*mm, "RAPPORT")
+        c.drawString(18*mm, H - 98*mm, "D'AUDIT DE")
+        c.setFillColor(C["accent"])
+        c.drawString(18*mm, H - 114*mm, "SÉCURITÉ")
 
-    def _draw_footer(self, canv, doc):
-        canv.saveState()
+        # Déco titre
+        c.setFillColor(C["accent"])
+        c.rect(18*mm, H - 119*mm, 26*mm, 2.5, fill=1, stroke=0)
+        c.setFillColor(C["border"])
+        c.rect(46*mm, H - 119*mm - 0.5, W - 58*mm, 0.5, fill=1, stroke=0)
 
-        # Fond footer
-        canv.setFillColor(DARK_SURFACE)
-        canv.rect(0, 0, W, 15*mm, fill=1, stroke=0)
+        # ── Cible ─────────────────────────────────────────────────────────────
+        c.setFillColor(C["surface2"])
+        c.roundRect(18*mm, H - 139*mm, W - 28*mm, 16*mm, 4, fill=1, stroke=0)
+        c.setStrokeColor(C["border"])
+        c.setLineWidth(0.5)
+        c.roundRect(18*mm, H - 139*mm, W - 28*mm, 16*mm, 4, fill=0, stroke=1)
+        c.setFillColor(C["text3"])
+        c.setFont("Helvetica-Bold", 6.5)
+        c.drawString(22*mm, H - 126*mm, "CIBLE AUDITÉE")
+        c.setFillColor(C["accent"])
+        c.setFont("Helvetica-Bold", 11)
+        c.drawString(22*mm, H - 134*mm, target)
 
-        # Ligne accent
-        canv.setFillColor(TEXT_MUTED)
-        canv.rect(0, 15*mm, W, 0.5, fill=1, stroke=0)
+        # ── Bloc score ────────────────────────────────────────────────────────
+        bx, by, bw, bh = 18*mm, H - 198*mm, 52*mm, 52*mm
+        c.setFillColor(C["surface"])
+        c.roundRect(bx, by, bw, bh, 5, fill=1, stroke=0)
+        c.setStrokeColor(rcol)
+        c.setLineWidth(1.2)
+        c.roundRect(bx, by, bw, bh, 5, fill=0, stroke=1)
+        # Label
+        c.setFillColor(C["text3"])
+        c.setFont("Helvetica-Bold", 6.5)
+        lbl_txt = "SCORE DE RISQUE"
+        c.drawString(bx + (bw - c.stringWidth(lbl_txt, "Helvetica-Bold", 6.5)) / 2,
+                     by + bh - 9, lbl_txt)
+        # Chiffre
+        c.setFillColor(rcol)
+        c.setFont("Helvetica-Bold", 36)
+        sw = c.stringWidth(str(score), "Helvetica-Bold", 36)
+        c.drawString(bx + (bw - sw) / 2, by + 22, str(score))
+        # /100
+        c.setFillColor(C["text3"])
+        c.setFont("Helvetica", 8)
+        sw2 = c.stringWidth("/ 100", "Helvetica", 8)
+        c.drawString(bx + (bw - sw2) / 2, by + 13, "/ 100")
+        # Level
+        c.setFillColor(rcol)
+        c.setFont("Helvetica-Bold", 9)
+        sw3 = c.stringWidth(level, "Helvetica-Bold", 9)
+        c.drawString(bx + (bw - sw3) / 2, by + 4, level)
 
-        # Page number
-        canv.setFillColor(TEXT_SECONDARY)
-        canv.setFont("Helvetica", 7)
-        canv.drawCentredString(W / 2, 6*mm, f"Page {doc.page}")
-        canv.drawString(15*mm, 6*mm, "CONFIDENTIEL — Usage interne uniquement")
-        canv.drawRightString(W - 15*mm, 6*mm, "VulnScan Pro v1.0")
+        # ── Blocs sévérité ────────────────────────────────────────────────────
+        sev_items = [
+            ("CRITIQUE", sc.get("CRITICAL", 0), C["sev_critical"]),
+            ("ÉLEVÉ",    sc.get("HIGH", 0),     C["sev_high"]),
+            ("MOYEN",    sc.get("MEDIUM", 0),   C["sev_medium"]),
+            ("FAIBLE",   sc.get("LOW", 0),      C["sev_low"]),
+            ("INFO",     sc.get("INFO", 0),      C["sev_info"]),
+        ]
+        avail_w = W - 28*mm - 58*mm
+        box_w   = avail_w / 5
+        sx = 18*mm + 58*mm
+        for lbl, cnt, col in sev_items:
+            c.setFillColor(C["surface"])
+            c.roundRect(sx, by, box_w - 2, bh, 4, fill=1, stroke=0)
+            c.setStrokeColor(col)
+            c.setLineWidth(0.5)
+            c.roundRect(sx, by, box_w - 2, bh, 4, fill=0, stroke=1)
+            # Barre top couleur
+            c.setFillColor(col)
+            c.rect(sx, by + bh - 3, box_w - 2, 3, fill=1, stroke=0)
+            # Nombre
+            c.setFillColor(col if cnt > 0 else C["text3"])
+            c.setFont("Helvetica-Bold", 24)
+            sw = c.stringWidth(str(cnt), "Helvetica-Bold", 24)
+            c.drawString(sx + (box_w - 2 - sw) / 2, by + 20, str(cnt))
+            # Label
+            c.setFillColor(C["text3"])
+            c.setFont("Helvetica-Bold", 6)
+            sw2 = c.stringWidth(lbl, "Helvetica-Bold", 6)
+            c.drawString(sx + (box_w - 2 - sw2) / 2, by + 10, lbl)
+            sx += box_w
 
-        canv.restoreState()
+        # ── Infos mission ─────────────────────────────────────────────────────
+        info_items = [
+            ("ENTREPRISE",  company),
+            ("AUDITEUR",    auditor),
+            ("DURÉE",       f"{dur:.0f}s"),
+            ("MODULES",     f"{active_mods} actifs"),
+        ]
+        info_y  = H - 218*mm
+        info_cw = (W - 28*mm) / 4
+        ix = 18*mm
+        for lbl, val in info_items:
+            c.setFillColor(C["surface2"])
+            c.roundRect(ix, info_y, info_cw - 3, 15*mm, 3, fill=1, stroke=0)
+            c.setFillColor(C["text3"])
+            c.setFont("Helvetica-Bold", 6.5)
+            c.drawString(ix + 4*mm, info_y + 12*mm, lbl)
+            c.setFillColor(C["text"])
+            c.setFont("Helvetica-Bold", 9)
+            c.drawString(ix + 4*mm, info_y + 5*mm, str(val)[:26])
+            ix += info_cw
 
+        # ── Footer confidentiel ────────────────────────────────────────────────
+        c.setFillColor(C["surface"])
+        c.rect(8*mm, 0, W - 8*mm, 20*mm, fill=1, stroke=0)
+        c.setFillColor(C["accent"])
+        c.rect(8*mm, 20*mm, W - 8*mm, 0.5, fill=1, stroke=0)
+        c.setFillColor(C["text3"])
+        c.setFont("Helvetica", 7)
+        c.drawCentredString(W / 2 + 4*mm, 13*mm,
+            "DOCUMENT STRICTEMENT CONFIDENTIEL — Usage légal uniquement sur systèmes autorisés")
+        c.setFillColor(C["accent"])
+        c.setFont("Helvetica-Bold", 7.5)
+        c.drawString(18*mm, 7*mm, "VulnScan Pro v1.0")
+        c.setFillColor(C["text3"])
+        c.setFont("Helvetica", 7.5)
+        c.drawRightString(W - 12*mm, 7*mm, "by hawkz")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PAGE CANVAS — header/footer automatiques
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class ReportCanvas(Canvas):
+    def __init__(self, filename, doc_data=None, **kwargs):
+        super().__init__(filename, **kwargs)
+        self.doc_data = doc_data or {}
+        self._saved_page_states = []
+
+    def showPage(self):
+        self._saved_page_states.append(dict(self.__dict__))
+        self._startPage()
+
+    def save(self):
+        num_pages = len(self._saved_page_states)
+        for state in self._saved_page_states:
+            self.__dict__.update(state)
+            self._draw_chrome(self._pageNumber, num_pages)
+            super().showPage()
+        super().save()
+
+    def _draw_chrome(self, page_num, total):
+        if page_num == 1:
+            return  # Cover gérée par CoverPage flowable
+
+        target  = self.doc_data.get("target", "")
+        company = self.doc_data.get("company", "")
+        try:
+            dt = datetime.fromisoformat(self.doc_data.get("scan_date", ""))
+            date_str = dt.strftime("%d/%m/%Y")
+        except Exception:
+            date_str = ""
+
+        # Header
+        self.setFillColor(C["surface"])
+        self.rect(0, H - 15*mm, W, 15*mm, fill=1, stroke=0)
+        self.setFillColor(C["accent"])
+        self.rect(0, H - 15*mm, 3*mm, 15*mm, fill=1, stroke=0)
+        self.setFillColor(C["border"])
+        self.rect(0, H - 15*mm, W, 0.5, fill=1, stroke=0)
+
+        self.setFillColor(C["accent"])
+        self.setFont("Helvetica-Bold", 8.5)
+        self.drawString(8*mm, H - 8*mm, "VULNSCAN PRO")
+        self.setFillColor(C["text3"])
+        self.setFont("Helvetica", 7)
+        self.drawString(8*mm, H - 12.5*mm, "by hawkz")
+
+        self.setFillColor(C["border"])
+        self.rect(46*mm, H - 13*mm, 0.5, 9*mm, fill=1, stroke=0)
+
+        self.setFillColor(C["text2"])
+        self.setFont("Helvetica", 7.5)
+        self.drawString(50*mm, H - 8*mm, f"Audit de sécurité — {target}")
+        self.setFillColor(C["text3"])
+        self.setFont("Helvetica", 7)
+        self.drawString(50*mm, H - 12.5*mm, "CONFIDENTIEL")
+
+        self.setFillColor(C["text2"])
+        self.setFont("Helvetica", 7.5)
+        self.drawRightString(W - 8*mm, H - 8*mm, company)
+        self.setFillColor(C["text3"])
+        self.setFont("Helvetica", 7)
+        self.drawRightString(W - 8*mm, H - 12.5*mm, date_str)
+
+        # Footer
+        self.setFillColor(C["surface"])
+        self.rect(0, 0, W, 10*mm, fill=1, stroke=0)
+        self.setFillColor(C["border"])
+        self.rect(0, 10*mm, W, 0.5, fill=1, stroke=0)
+        self.setFillColor(C["accent"])
+        self.rect(0, 0, 3*mm, 10*mm, fill=1, stroke=0)
+
+        self.setFillColor(C["text3"])
+        self.setFont("Helvetica", 7)
+        self.drawString(8*mm, 3.5*mm, "DOCUMENT CONFIDENTIEL — Usage interne uniquement")
+
+        self.setFillColor(C["accent"])
+        self.setFont("Helvetica-Bold", 7.5)
+        self.drawCentredString(W / 2, 3.5*mm, f"Page {page_num} / {total}")
+
+        self.setFillColor(C["text3"])
+        self.setFont("Helvetica", 7)
+        self.drawRightString(W - 8*mm, 3.5*mm, "VulnScan Pro v1.0")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# REPORT GENERATOR
+# ═══════════════════════════════════════════════════════════════════════════════
 
 class ReportGenerator:
     def __init__(self, results: dict, output_dir: str = "./output"):
-        self.results = results
+        self.r = results
         self.output_dir = output_dir
-        self.styles = self._build_styles()
         os.makedirs(output_dir, exist_ok=True)
+        self.all_findings = self._collect_findings()
+        self.sev_counts   = self._count_sev()
+        self.r["_sev_counts"] = self.sev_counts
 
-    def _build_styles(self) -> dict:
-        base = getSampleStyleSheet()
+    def _collect_findings(self):
+        out = []
+        for mod, data in self.r.get("modules", {}).items():
+            if isinstance(data, dict):
+                for f in data.get("findings", []):
+                    f = dict(f)
+                    f.setdefault("_module", mod)
+                    out.append(f)
+        out.sort(key=lambda x: SEV_ORDER.get(x.get("severity", "INFO"), 9))
+        return out
 
-        styles = {
-            "cover_title": ParagraphStyle(
-                "cover_title",
-                fontSize=36,
-                fontName="Helvetica-Bold",
-                textColor=TEXT_PRIMARY,
-                alignment=TA_LEFT,
-                spaceAfter=8,
-                leading=42,
-            ),
-            "cover_subtitle": ParagraphStyle(
-                "cover_subtitle",
-                fontSize=14,
-                fontName="Helvetica",
-                textColor=ACCENT_CYAN,
-                alignment=TA_LEFT,
-                spaceAfter=6,
-                leading=20,
-            ),
-            "cover_meta": ParagraphStyle(
-                "cover_meta",
-                fontSize=10,
-                fontName="Helvetica",
-                textColor=TEXT_SECONDARY,
-                alignment=TA_LEFT,
-                spaceAfter=4,
-            ),
-            "section_title": ParagraphStyle(
-                "section_title",
-                fontSize=18,
-                fontName="Helvetica-Bold",
-                textColor=ACCENT_CYAN,
-                spaceBefore=20,
-                spaceAfter=12,
-                leading=24,
-            ),
-            "subsection_title": ParagraphStyle(
-                "subsection_title",
-                fontSize=13,
-                fontName="Helvetica-Bold",
-                textColor=TEXT_PRIMARY,
-                spaceBefore=14,
-                spaceAfter=8,
-                leading=18,
-            ),
-            "body": ParagraphStyle(
-                "body",
-                fontSize=9,
-                fontName="Helvetica",
-                textColor=TEXT_SECONDARY,
-                leading=14,
-                spaceAfter=6,
-                alignment=TA_JUSTIFY,
-            ),
-            "body_bold": ParagraphStyle(
-                "body_bold",
-                fontSize=9,
-                fontName="Helvetica-Bold",
-                textColor=TEXT_PRIMARY,
-                leading=14,
-                spaceAfter=4,
-            ),
-            "code": ParagraphStyle(
-                "code",
-                fontSize=8,
-                fontName="Courier",
-                textColor=ACCENT_GREEN,
-                leading=12,
-                spaceAfter=4,
-                backColor=HexColor("#0D1117"),
-                leftIndent=8,
-                rightIndent=8,
-                borderPadding=6,
-            ),
-            "finding_title": ParagraphStyle(
-                "finding_title",
-                fontSize=11,
-                fontName="Helvetica-Bold",
-                textColor=TEXT_PRIMARY,
-                spaceBefore=6,
-                spaceAfter=4,
-                leading=15,
-            ),
-            "finding_desc": ParagraphStyle(
-                "finding_desc",
-                fontSize=9,
-                fontName="Helvetica",
-                textColor=TEXT_SECONDARY,
-                leading=13,
-                spaceAfter=4,
-                alignment=TA_JUSTIFY,
-            ),
-            "finding_reco": ParagraphStyle(
-                "finding_reco",
-                fontSize=9,
-                fontName="Helvetica",
-                textColor=ACCENT_GREEN,
-                leading=13,
-                spaceAfter=4,
-            ),
-            "table_header": ParagraphStyle(
-                "table_header",
-                fontSize=8,
-                fontName="Helvetica-Bold",
-                textColor=DARK_BG,
-                alignment=TA_CENTER,
-            ),
-            "table_cell": ParagraphStyle(
-                "table_cell",
-                fontSize=8,
-                fontName="Helvetica",
-                textColor=TEXT_SECONDARY,
-                leading=11,
-            ),
-            "table_cell_center": ParagraphStyle(
-                "table_cell_center",
-                fontSize=8,
-                fontName="Helvetica",
-                textColor=TEXT_SECONDARY,
-                alignment=TA_CENTER,
-            ),
-            "exec_title": ParagraphStyle(
-                "exec_title",
-                fontSize=22,
-                fontName="Helvetica-Bold",
-                textColor=TEXT_PRIMARY,
-                spaceAfter=8,
-            ),
-            "risk_score": ParagraphStyle(
-                "risk_score",
-                fontSize=48,
-                fontName="Helvetica-Bold",
-                textColor=ACCENT_CYAN,
-                alignment=TA_CENTER,
-            ),
-            "risk_label": ParagraphStyle(
-                "risk_label",
-                fontSize=12,
-                fontName="Helvetica-Bold",
-                textColor=TEXT_SECONDARY,
-                alignment=TA_CENTER,
-            ),
-            "toc_entry": ParagraphStyle(
-                "toc_entry",
-                fontSize=9,
-                fontName="Helvetica",
-                textColor=TEXT_SECONDARY,
-                leading=16,
-                leftIndent=5,
-            ),
-            "toc_section": ParagraphStyle(
-                "toc_section",
-                fontSize=10,
-                fontName="Helvetica-Bold",
-                textColor=TEXT_PRIMARY,
-                leading=16,
-            ),
-            "disclaimer": ParagraphStyle(
-                "disclaimer",
-                fontSize=8,
-                fontName="Helvetica",
-                textColor=TEXT_MUTED,
-                leading=12,
-                alignment=TA_JUSTIFY,
-            ),
-            "caption": ParagraphStyle(
-                "caption",
-                fontSize=8,
-                fontName="Helvetica",
-                textColor=TEXT_MUTED,
-                alignment=TA_CENTER,
-            ),
-        }
-        return styles
+    def _count_sev(self):
+        c = {k: 0 for k in SEV_ORDER}
+        for f in self.all_findings:
+            s = f.get("severity", "INFO")
+            if s in c: c[s] += 1
+        return c
 
     def generate(self) -> str:
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        target_clean = self.results.get("target", "target").replace(".", "_").replace("/", "_")
-        filename = f"vulnscan_{target_clean}_{ts}.pdf"
-        filepath = os.path.join(self.output_dir, filename)
+        tgt = self.r.get("target", "target").replace(".", "_").replace("/", "_")[:30]
+        filepath = os.path.join(self.output_dir, f"vulnscan_{tgt}_{ts}.pdf")
 
-        doc = SimpleDocTemplate(
+        # Cover page : frame pleine page sans marges
+        frame_cover = Frame(
+            0, 0, W, H,
+            leftPadding=0, rightPadding=0,
+            topPadding=0, bottomPadding=0,
+            id="cover"
+        )
+        # Pages intérieures : marges header/footer
+        frame_inner = Frame(
+            8*mm, 12*mm,
+            W - 18*mm, H - 29*mm,
+            leftPadding=0, rightPadding=0,
+            topPadding=0, bottomPadding=0,
+            id="main"
+        )
+
+        def make_canvas(filename, **kwargs):
+            return ReportCanvas(filename, doc_data=self.r, **kwargs)
+
+        doc = BaseDocTemplate(
             filepath,
             pagesize=A4,
-            rightMargin=15*mm,
-            leftMargin=15*mm,
-            topMargin=30*mm,
-            bottomMargin=20*mm,
-            title=f"Rapport VulnScan — {self.results.get('target', '')}",
-            author=self.results.get("auditor", "VulnScan Pro"),
-            subject="Rapport d'audit de sécurité",
-            creator="VulnScan Pro v1.0",
+            pageTemplates=[
+                PageTemplate(id="cover", frames=[frame_cover]),
+                PageTemplate(id="main",  frames=[frame_inner]),
+            ],
+            initialtemplate="cover",
+            title=f"Rapport VulnScan — {self.r.get('target', '')}",
+            author=self.r.get("auditor", "hawkz"),
+            subject="Rapport d'audit de sécurité — VulnScan Pro by hawkz",
+            creator="VulnScan Pro v1.0 by hawkz",
         )
 
-        header_canvas = HeaderCanvas(self.results)
+        from reportlab.platypus import NextPageTemplate
         story = []
-
-        # ── Pages ─────────────────────────────────────────────
-        story += self._build_cover_page()
+        story += self._cover()
+        story.append(NextPageTemplate("main"))
         story.append(PageBreak())
-
-        story += self._build_toc()
+        story += self._toc()
         story.append(PageBreak())
-
-        story += self._build_executive_summary()
+        story += self._executive_summary()
         story.append(PageBreak())
-
-        story += self._build_findings_detail()
+        story += self._findings_detail()
         story.append(PageBreak())
-
-        story += self._build_network_section()
+        story += self._network_section()
         story.append(PageBreak())
-
-        story += self._build_http_section()
+        story += self._http_section()
         story.append(PageBreak())
-
-        story += self._build_ssl_section()
+        story += self._ssl_section()
         story.append(PageBreak())
-
-        story += self._build_dns_section()
+        story += self._dns_section()
         story.append(PageBreak())
-
-        story += self._build_cve_section()
+        story += self._cve_section()
         story.append(PageBreak())
-
-        story += self._build_recommendations()
+        story += self._recommendations()
         story.append(PageBreak())
+        story += self._methodology()
 
-        story += self._build_methodology()
-
-        doc.build(story, onFirstPage=header_canvas, onLaterPages=header_canvas)
+        doc.build(story, canvasmaker=make_canvas)
         return filepath
 
-    def _build_cover_page(self) -> list:
-        elements = []
-        target = self.results.get("target", "")
-        company = self.results.get("company", "Confidentiel")
-        auditor = self.results.get("auditor", "VulnScan Pro")
-        scan_date = self.results.get("scan_date", "")
-        risk = self.results.get("risk", {})
+    # ═══════════════════════════════════════════════════════════════════════════
+    # PAGES
+    # ═══════════════════════════════════════════════════════════════════════════
 
-        try:
-            date_fmt = datetime.fromisoformat(scan_date).strftime("%d %B %Y")
-        except Exception:
-            date_fmt = datetime.now().strftime("%d %B %Y")
+    def _cover(self):
+        return [CoverPage(self.r)]
 
-        # Grand fond sombre simulé via table
-        cover_data = [[""]]
-        cover_table = Table(cover_data, colWidths=[W - 30*mm], rowHeights=[240])
-        cover_table.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), DARK_SURFACE),
-            ("ROUNDEDCORNERS", [8]),
-            ("TOPPADDING", (0, 0), (-1, -1), 30),
-            ("LEFTPADDING", (0, 0), (-1, -1), 30),
-        ]))
+    # ── TOC ──────────────────────────────────────────────────────────────────
 
-        # Accent bar
-        accent_data = [[""]]
-        accent_table = Table(accent_data, colWidths=[6], rowHeights=[90])
-        accent_table.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), ACCENT_CYAN),
-        ]))
-
-        # Score badge
-        level = risk.get("level", "N/A")
-        score = risk.get("score", 0)
-        level_color = risk.get("color", "grey")
-
-        risk_color_map = {
-            "red": SEVERITY_COLORS["CRITICAL"],
-            "orange3": SEVERITY_COLORS["HIGH"],
-            "yellow": SEVERITY_COLORS["MEDIUM"],
-            "green": SEVERITY_COLORS["LOW"],
-            "bright_green": ACCENT_GREEN,
-        }
-        risk_color = risk_color_map.get(level_color, ACCENT_CYAN)
-
-        # En-tête du rapport
-        elements.append(Spacer(1, 15*mm))
-
-        # Bande de titre
-        title_block = [
-            [
-                Paragraph("RAPPORT D'AUDIT", ParagraphStyle("ct", fontSize=11, fontName="Helvetica",
-                           textColor=ACCENT_CYAN, spaceAfter=2)),
-            ],
-            [
-                Paragraph("DE SÉCURITÉ", ParagraphStyle("ct2", fontSize=11, fontName="Helvetica",
-                           textColor=ACCENT_CYAN, spaceAfter=2)),
-            ],
-        ]
-        label_table = Table([[Paragraph("RAPPORT D'AUDIT DE SÉCURITÉ",
-                             ParagraphStyle("lbl", fontSize=10, fontName="Helvetica-Bold",
-                                          textColor=ACCENT_CYAN))]],
-                           colWidths=[W - 30*mm])
-        label_table.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), HexColor("#0A2040")),
-            ("LEFTPADDING", (0, 0), (-1, -1), 12),
-            ("TOPPADDING", (0, 0), (-1, -1), 8),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
-        ]))
-        elements.append(label_table)
-        elements.append(Spacer(1, 8*mm))
-
-        # Titre principal
-        elements.append(Paragraph(f"Audit de Sécurité", self.styles["cover_title"]))
-        elements.append(Paragraph(target, ParagraphStyle("tgt", fontSize=22, fontName="Helvetica-Bold",
-                                                         textColor=ACCENT_CYAN, spaceAfter=10)))
-        elements.append(HRFlowable(width="100%", thickness=1, color=TEXT_MUTED, spaceAfter=15))
-
-        # Métadonnées dans une grille
-        meta_data = [
-            [
-                Paragraph("ENTREPRISE", ParagraphStyle("ml", fontSize=7, fontName="Helvetica",
-                           textColor=TEXT_MUTED, spaceAfter=2)),
-                Paragraph("AUDITEUR", ParagraphStyle("ml2", fontSize=7, fontName="Helvetica",
-                           textColor=TEXT_MUTED, spaceAfter=2)),
-                Paragraph("DATE DU SCAN", ParagraphStyle("ml3", fontSize=7, fontName="Helvetica",
-                           textColor=TEXT_MUTED, spaceAfter=2)),
-                Paragraph("DURÉE", ParagraphStyle("ml4", fontSize=7, fontName="Helvetica",
-                           textColor=TEXT_MUTED, spaceAfter=2)),
-            ],
-            [
-                Paragraph(company, ParagraphStyle("mv", fontSize=11, fontName="Helvetica-Bold",
-                           textColor=TEXT_PRIMARY)),
-                Paragraph(auditor, ParagraphStyle("mv2", fontSize=11, fontName="Helvetica-Bold",
-                           textColor=TEXT_PRIMARY)),
-                Paragraph(date_fmt, ParagraphStyle("mv3", fontSize=11, fontName="Helvetica-Bold",
-                           textColor=TEXT_PRIMARY)),
-                Paragraph(f"{self.results.get('scan_duration_seconds', 0):.0f}s",
-                          ParagraphStyle("mv4", fontSize=11, fontName="Helvetica-Bold",
-                           textColor=TEXT_PRIMARY)),
-            ],
-        ]
-        meta_table = Table(meta_data, colWidths=[(W - 30*mm) / 4] * 4)
-        meta_table.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), DARK_SURFACE),
-            ("TOPPADDING", (0, 0), (-1, -1), 10),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
-            ("LEFTPADDING", (0, 0), (-1, -1), 10),
-            ("LINEBELOW", (0, 0), (-1, 0), 0.5, TEXT_MUTED),
-            ("LINEAFTER", (0, 0), (-2, -1), 0.5, TEXT_MUTED),
-        ]))
-        elements.append(meta_table)
-        elements.append(Spacer(1, 12*mm))
-
-        # Score de risque global
-        score_color = risk_color
-
-        score_data = [
-            [
-                Paragraph("SCORE DE RISQUE GLOBAL", ParagraphStyle("sl", fontSize=8, fontName="Helvetica",
-                           textColor=TEXT_MUTED, alignment=TA_CENTER)),
-                Paragraph("VULNÉRABILITÉS TOTALES", ParagraphStyle("sl2", fontSize=8, fontName="Helvetica",
-                           textColor=TEXT_MUTED, alignment=TA_CENTER)),
-                Paragraph("NIVEAU DE RISQUE", ParagraphStyle("sl3", fontSize=8, fontName="Helvetica",
-                           textColor=TEXT_MUTED, alignment=TA_CENTER)),
-            ],
-            [
-                Paragraph(f"{score}/100", ParagraphStyle("sv", fontSize=28, fontName="Helvetica-Bold",
-                           textColor=score_color, alignment=TA_CENTER)),
-                Paragraph(str(self._count_total_findings()), ParagraphStyle("sv2", fontSize=28,
-                           fontName="Helvetica-Bold", textColor=TEXT_PRIMARY, alignment=TA_CENTER)),
-                Paragraph(level, ParagraphStyle("sv3", fontSize=20, fontName="Helvetica-Bold",
-                           textColor=score_color, alignment=TA_CENTER)),
-            ],
-        ]
-        score_table = Table(score_data, colWidths=[(W - 30*mm) / 3] * 3)
-        score_table.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), DARK_SURFACE),
-            ("TOPPADDING", (0, 0), (-1, -1), 12),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 12),
-            ("LINEBELOW", (0, 0), (-1, 0), 0.5, TEXT_MUTED),
-            ("LINEAFTER", (0, 0), (-2, -1), 0.5, TEXT_MUTED),
-            ("BOX", (0, 0), (-1, -1), 1, score_color),
-        ]))
-        elements.append(score_table)
-        elements.append(Spacer(1, 12*mm))
-
-        # Répartition par sévérité
-        sev_counts = self._count_by_severity()
-        sev_data = [[
-            Paragraph(f"CRITICAL\n{sev_counts.get('CRITICAL', 0)}",
-                      ParagraphStyle("sc", fontSize=10, fontName="Helvetica-Bold",
-                                     textColor=SEVERITY_COLORS["CRITICAL"], alignment=TA_CENTER)),
-            Paragraph(f"HIGH\n{sev_counts.get('HIGH', 0)}",
-                      ParagraphStyle("sh", fontSize=10, fontName="Helvetica-Bold",
-                                     textColor=SEVERITY_COLORS["HIGH"], alignment=TA_CENTER)),
-            Paragraph(f"MEDIUM\n{sev_counts.get('MEDIUM', 0)}",
-                      ParagraphStyle("sm", fontSize=10, fontName="Helvetica-Bold",
-                                     textColor=SEVERITY_COLORS["MEDIUM"], alignment=TA_CENTER)),
-            Paragraph(f"LOW\n{sev_counts.get('LOW', 0)}",
-                      ParagraphStyle("sl_", fontSize=10, fontName="Helvetica-Bold",
-                                     textColor=SEVERITY_COLORS["LOW"], alignment=TA_CENTER)),
-            Paragraph(f"INFO\n{sev_counts.get('INFO', 0)}",
-                      ParagraphStyle("si", fontSize=10, fontName="Helvetica-Bold",
-                                     textColor=SEVERITY_COLORS["INFO"], alignment=TA_CENTER)),
-        ]]
-        sev_table = Table(sev_data, colWidths=[(W - 30*mm) / 5] * 5, rowHeights=[40])
-        sev_table.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (0, -1), SEVERITY_BG_COLORS["CRITICAL"]),
-            ("BACKGROUND", (1, 0), (1, -1), SEVERITY_BG_COLORS["HIGH"]),
-            ("BACKGROUND", (2, 0), (2, -1), SEVERITY_BG_COLORS["MEDIUM"]),
-            ("BACKGROUND", (3, 0), (3, -1), SEVERITY_BG_COLORS["LOW"]),
-            ("BACKGROUND", (4, 0), (4, -1), SEVERITY_BG_COLORS["INFO"]),
-            ("TOPPADDING", (0, 0), (-1, -1), 8),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
-            ("LINEAFTER", (0, 0), (-2, -1), 0.5, TEXT_MUTED),
-        ]))
-        elements.append(sev_table)
-
-        elements.append(Spacer(1, 20*mm))
-
-        # Avertissement confidentialité
-        disclaimer_text = (
-            "DOCUMENT CONFIDENTIEL — Ce rapport contient des informations sensibles sur la "
-            "sécurité du système audité. Il est destiné exclusivement aux personnes autorisées. "
-            "Toute reproduction ou diffusion non autorisée est interdite."
-        )
-        disc_table = Table([[Paragraph(disclaimer_text, self.styles["disclaimer"])]],
-                           colWidths=[W - 30*mm])
-        disc_table.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), HexColor("#1A1A1A")),
-            ("TOPPADDING", (0, 0), (-1, -1), 8),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
-            ("LEFTPADDING", (0, 0), (-1, -1), 10),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 10),
-            ("BOX", (0, 0), (-1, -1), 0.5, TEXT_MUTED),
-        ]))
-        elements.append(disc_table)
-
-        return elements
-
-    def _build_toc(self) -> list:
-        elements = []
-        elements.append(Paragraph("Table des matières", self.styles["section_title"]))
-        elements.append(HRFlowable(width="100%", thickness=1, color=ACCENT_CYAN, spaceAfter=12))
-
+    def _toc(self):
+        e = []
+        e += section_header("Table des matières")
         sections = [
-            ("1.", "Résumé Exécutif", ""),
-            ("2.", "Détail des Vulnérabilités", ""),
-            ("   2.1", "Vulnérabilités Critiques", ""),
-            ("   2.2", "Vulnérabilités Élevées", ""),
-            ("   2.3", "Vulnérabilités Moyennes", ""),
-            ("   2.4", "Vulnérabilités Faibles", ""),
-            ("3.", "Analyse Réseau & Ports", ""),
-            ("4.", "Analyse HTTP/HTTPS", ""),
-            ("5.", "Analyse SSL/TLS", ""),
-            ("6.", "Analyse DNS", ""),
-            ("7.", "CVEs Identifiées", ""),
-            ("8.", "Recommandations Prioritaires", ""),
-            ("9.", "Méthodologie", ""),
+            ("01", "Résumé Exécutif"),
+            ("02", "Détail des Vulnérabilités"),
+            ("03", "Analyse Réseau & Ports"),
+            ("04", "Analyse HTTP / HTTPS"),
+            ("05", "Analyse SSL / TLS"),
+            ("06", "Analyse DNS & WHOIS"),
+            ("07", "CVEs Identifiées"),
+            ("08", "Recommandations Prioritaires"),
+            ("09", "Méthodologie"),
         ]
-
-        for num, title, page in sections:
-            is_main = not num.startswith("  ")
-            style = self.styles["toc_section"] if is_main else self.styles["toc_entry"]
+        for num, title in sections:
             row = Table(
-                [[Paragraph(num, style), Paragraph(title, style), Paragraph("•••", self.styles["toc_entry"])]],
-                colWidths=[20*mm, W - 70*mm, 20*mm]
+                [[
+                    Paragraph(f'<font color="{C["accent"].hexval()}"><b>{num}</b></font>',
+                              STYLES["toc_main"]),
+                    Paragraph(title, STYLES["toc_main"]),
+                    Paragraph("· · · · · ·", STYLES["small"]),
+                ]],
+                colWidths=[14*mm, W - 50*mm, 16*mm]
             )
             row.setStyle(TableStyle([
-                ("TOPPADDING", (0, 0), (-1, -1), 2),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
-                ("LINEBELOW", (0, 0), (-1, -1), 0.3, TEXT_MUTED),
-                ("ALIGN", (2, 0), (2, -1), "RIGHT"),
-                ("TEXTCOLOR", (2, 0), (2, -1), TEXT_MUTED),
+                ("TOPPADDING",    (0, 0), (-1, -1), 5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                ("LINEBELOW",     (0, 0), (-1, -1), 0.4, C["border"]),
+                ("ALIGN",         (2, 0), (2, 0), "RIGHT"),
             ]))
-            elements.append(row)
+            e.append(row)
+        return e
 
-        return elements
+    # ── Résumé exécutif ───────────────────────────────────────────────────────
 
-    def _build_executive_summary(self) -> list:
-        elements = []
-        elements.append(Paragraph("1. Résumé Exécutif", self.styles["section_title"]))
-        elements.append(HRFlowable(width="100%", thickness=1, color=ACCENT_CYAN, spaceAfter=10))
+    def _executive_summary(self):
+        e = []
+        e += section_header("01 — Résumé Exécutif",
+                             "Synthèse des résultats de l'audit de sécurité.")
 
-        target = self.results.get("target", "")
-        company = self.results.get("company", "")
-        auditor = self.results.get("auditor", "")
-        risk = self.results.get("risk", {})
-        level = risk.get("level", "N/A")
-        score = risk.get("score", 0)
+        risk    = self.r.get("risk", {})
+        score   = risk.get("score", 0)
+        level   = risk.get("level", "N/A")
+        target  = self.r.get("target", "")
+        company = self.r.get("company", "")
+        auditor = self.r.get("auditor", "")
+        total   = len(self.all_findings)
+        dur     = self.r.get("scan_duration_seconds", 0)
 
         try:
-            scan_date = datetime.fromisoformat(self.results.get("scan_date", "")).strftime("%d %B %Y à %H:%M")
+            dt = datetime.fromisoformat(self.r.get("scan_date", ""))
+            date_fmt = dt.strftime("%d %B %Y à %H:%M")
         except Exception:
-            scan_date = "N/A"
+            date_fmt = "N/A"
 
-        duration = self.results.get("scan_duration_seconds", 0)
+        e.append(Paragraph("Contexte de l'audit", STYLES["subsection"]))
+        e.append(Paragraph(
+            f"Un audit de sécurité automatisé a été conduit le <b>{date_fmt}</b> "
+            f"sur la cible <b>{target}</b> pour le compte de <b>{company}</b> "
+            f"par l'auditeur <b>{auditor}</b>. "
+            f"La durée totale du scan a été de <b>{dur:.0f} secondes</b>. "
+            f"Tous les tests ont été réalisés depuis l'extérieur du périmètre (approche black-box).",
+            STYLES["body"]
+        ))
+        e.append(Spacer(1, 5*mm))
 
-        # Contexte
-        elements.append(Paragraph("Contexte de l'audit", self.styles["subsection_title"]))
-        context_text = (
-            f"Un audit de sécurité automatisé a été réalisé le <b>{scan_date}</b> sur la cible "
-            f"<b>{target}</b> pour le compte de <b>{company}</b>. "
-            f"L'audit a été conduit par <b>{auditor}</b> à l'aide de l'outil VulnScan Pro v1.0. "
-            f"La durée totale du scan a été de <b>{duration:.0f} secondes</b>."
+        rcol = risk_color_for_score(score)
+
+        # Score block
+        score_tbl = Table(
+            [
+                [Paragraph("SCORE GLOBAL", STYLES["label"])],
+                [Paragraph(
+                    f'<font size="34" color="{rcol.hexval()}"><b>{score}</b></font>'
+                    f'<font size="11" color="{C["text3"].hexval()}"> /100</font>',
+                    S("sc", alignment=TA_CENTER, leading=40)
+                )],
+                [Paragraph(
+                    f'<font color="{rcol.hexval()}"><b>{level}</b></font>',
+                    S("lv", alignment=TA_CENTER, fontSize=11, fontName="Helvetica-Bold", leading=16)
+                )],
+            ],
+            colWidths=[45*mm], rowHeights=[10, 44, 18]
         )
-        elements.append(Paragraph(context_text, self.styles["body"]))
-        elements.append(Spacer(1, 4*mm))
+        score_tbl.setStyle(TableStyle([
+            ("BACKGROUND",    (0, 0), (-1, -1), C["surface"]),
+            ("BOX",           (0, 0), (-1, -1), 1.5, rcol),
+            ("TOPPADDING",    (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("ALIGN",         (0, 0), (-1, -1), "CENTER"),
+        ]))
 
-        # Périmètre
-        elements.append(Paragraph("Périmètre analysé", self.styles["subsection_title"]))
-        modules_ran = []
-        module_names = {
-            "whois": "Informations WHOIS & DNS Passif",
-            "dns": "Scan DNS actif (enregistrements, zone transfer, SPF/DKIM/DMARC)",
-            "ports": "Scan de ports TCP (plage complète)",
-            "network": "Analyse réseau Nmap (services, versions, OS fingerprinting)",
-            "vulns": "Scripts NSE de vulnérabilités Nmap",
-            "http": "Analyse HTTP (headers de sécurité, technologies, CORS, cookies)",
-            "ssl": "Analyse SSL/TLS (certificat, protocoles, cipher suites)",
-            "cve": "Recherche de CVEs (NVD + base locale)",
-        }
-        for mod_key, mod_name in module_names.items():
-            data = self.results.get("modules", {}).get(mod_key, {})
-            if not data.get("skipped") and not data.get("error"):
-                modules_ran.append(f"✓ {mod_name}")
-
-        for item in modules_ran:
-            elements.append(Paragraph(item, ParagraphStyle("mi", fontSize=8, fontName="Helvetica",
-                                                            textColor=ACCENT_GREEN, leading=14,
-                                                            leftIndent=8)))
-        elements.append(Spacer(1, 4*mm))
-
-        # Résultat global
-        elements.append(Paragraph("Résultat global", self.styles["subsection_title"]))
-        sev_counts = self._count_by_severity()
-        total = self._count_total_findings()
-
-        result_text = (
-            f"L'audit a permis d'identifier <b>{total} problèmes de sécurité</b> répartis comme suit: "
-            f"<font color='red'><b>{sev_counts.get('CRITICAL', 0)} CRITIQUES</b></font>, "
-            f"<b>{sev_counts.get('HIGH', 0)} ÉLEVÉS</b>, "
-            f"<b>{sev_counts.get('MEDIUM', 0)} MOYENS</b>, "
-            f"<b>{sev_counts.get('LOW', 0)} FAIBLES</b>, "
-            f"et <b>{sev_counts.get('INFO', 0)} INFORMATIFS</b>. "
-            f"Le score de risque global est de <b>{score}/100</b>, correspondant à un niveau <b>{level}</b>."
-        )
-        elements.append(Paragraph(result_text, self.styles["body"]))
-        elements.append(Spacer(1, 6*mm))
-
-        # Tableau de synthèse des modules
-        elements.append(Paragraph("Synthèse par domaine", self.styles["subsection_title"]))
-
-        header_row = [
-            Paragraph("Domaine analysé", self.styles["table_header"]),
-            Paragraph("Statut", self.styles["table_header"]),
-            Paragraph("Critiques", self.styles["table_header"]),
-            Paragraph("Élevés", self.styles["table_header"]),
-            Paragraph("Moyens", self.styles["table_header"]),
-            Paragraph("Total", self.styles["table_header"]),
+        # Barres sévérité
+        sev_items = [
+            ("CRITICAL", "CRITIQUE", C["sev_critical"]),
+            ("HIGH",     "ÉLEVÉ",    C["sev_high"]),
+            ("MEDIUM",   "MOYEN",    C["sev_medium"]),
+            ("LOW",      "FAIBLE",   C["sev_low"]),
+            ("INFO",     "INFO",     C["sev_info"]),
         ]
-        rows = [header_row]
+        bar_rows = []
+        for k, lbl, col in sev_items:
+            cnt = self.sev_counts.get(k, 0)
+            pct = min(cnt / max(total, 1), 1.0)
+            bw_max = 88*mm
+            bw = max(pct * bw_max, 1)
+            bar = Table([["", ""]], colWidths=[bw, bw_max - bw], rowHeights=[6])
+            bar.setStyle(TableStyle([
+                ("BACKGROUND",    (0, 0), (0, 0), col),
+                ("BACKGROUND",    (1, 0), (1, 0), C["surface2"]),
+                ("TOPPADDING",    (0, 0), (-1, -1), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+                ("LEFTPADDING",   (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING",  (0, 0), (-1, -1), 0),
+            ]))
+            bar_rows.append([
+                Paragraph(lbl, S("bl", fontSize=7.5, fontName="Helvetica-Bold",
+                                 textColor=col, leading=10)),
+                bar,
+                Paragraph(
+                    f'<font color="{col.hexval()}"><b>{cnt}</b></font>',
+                    S("bc", fontSize=11, fontName="Helvetica-Bold",
+                      alignment=TA_RIGHT, leading=13)
+                ),
+            ])
 
-        module_display = {
-            "network": "Réseau & Services",
-            "ports": "Ports ouverts",
-            "http": "HTTP/HTTPS",
-            "ssl": "SSL/TLS",
-            "dns": "DNS",
-            "cve": "CVEs",
-            "vulns": "Vulnérabilités NSE",
-            "whois": "WHOIS",
+        bar_tbl = Table(bar_rows, colWidths=[22*mm, 88*mm, 12*mm])
+        bar_tbl.setStyle(TableStyle([
+            ("BACKGROUND",    (0, 0), (-1, -1), C["surface"]),
+            ("TOPPADDING",    (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 8),
+            ("RIGHTPADDING",  (0, 0), (-1, -1), 8),
+            ("LINEBELOW",     (0, 0), (-1, -2), 0.3, C["border"]),
+            ("BOX",           (0, 0), (-1, -1), 0.5, C["border"]),
+            ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+        ]))
+
+        combo = Table([[score_tbl, bar_tbl]], colWidths=[52*mm, W - 82*mm])
+        combo.setStyle(TableStyle([
+            ("TOPPADDING",    (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING",  (0, 0), (-1, -1), 4),
+            ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+        ]))
+        e.append(combo)
+        e.append(Spacer(1, 6*mm))
+
+        # Tableau modules
+        e.append(Paragraph("Résultats par module", STYLES["subsection"]))
+        hdr = [Paragraph(t, STYLES["th"]) for t in
+               ["Module", "Statut", "Critique", "Élevé", "Moyen", "Faible", "Total"]]
+        rows = [hdr]
+        mod_display = {
+            "network": "Réseau / Nmap", "ports": "Scan de ports",
+            "http": "HTTP / HTTPS",     "ssl":   "SSL / TLS",
+            "dns":  "DNS",              "cve":   "CVE Lookup",
+            "vulns":"Scripts NSE",      "whois": "WHOIS",
         }
-
-        for mod_key, display_name in module_display.items():
-            data = self.results.get("modules", {}).get(mod_key, {})
+        for key, label in mod_display.items():
+            data = self.r.get("modules", {}).get(key, {})
             if data.get("skipped"):
-                status = Paragraph("Ignoré", ParagraphStyle("s", fontSize=8, textColor=TEXT_MUTED, alignment=TA_CENTER))
-                rows.append([
-                    Paragraph(display_name, self.styles["table_cell"]),
-                    status,
-                    Paragraph("-", self.styles["table_cell_center"]),
-                    Paragraph("-", self.styles["table_cell_center"]),
-                    Paragraph("-", self.styles["table_cell_center"]),
-                    Paragraph("-", self.styles["table_cell_center"]),
-                ])
+                rows.append([Paragraph(label, STYLES["td"])] +
+                            [Paragraph("Ignoré", S("ig", fontSize=8, textColor=C["text3"],
+                                                   alignment=TA_CENTER))] +
+                            [Paragraph("—", STYLES["td_c"]) for _ in range(5)])
                 continue
-            if data.get("error"):
-                status = Paragraph("Erreur", ParagraphStyle("s", fontSize=8, textColor=SEVERITY_COLORS["HIGH"], alignment=TA_CENTER))
-            else:
-                status = Paragraph("OK", ParagraphStyle("s", fontSize=8, textColor=ACCENT_GREEN, alignment=TA_CENTER))
+            st_p = (Paragraph("✗ Erreur", S("er", fontSize=8, textColor=C["sev_high"],
+                                            alignment=TA_CENTER))
+                    if data.get("error") else
+                    Paragraph("✓ OK", S("ok", fontSize=8, textColor=C["green"],
+                                        alignment=TA_CENTER)))
+            ff = data.get("findings", [])
+            cc = sum(1 for f in ff if f.get("severity") == "CRITICAL")
+            hh = sum(1 for f in ff if f.get("severity") == "HIGH")
+            med_count = sum(1 for f in ff if f.get("severity") == "MEDIUM")
+            ll = sum(1 for f in ff if f.get("severity") == "LOW")
+            tt = len(ff)
 
-            findings = data.get("findings", [])
-            c = sum(1 for f in findings if f.get("severity") == "CRITICAL")
-            h = sum(1 for f in findings if f.get("severity") == "HIGH")
-            m = sum(1 for f in findings if f.get("severity") == "MEDIUM")
+            def cp(n, col):
+                hex_c = col.hexval()
+                hex_m = C["text3"].hexval()
+                txt = (f'<font color="{hex_c}"><b>{n}</b></font>'
+                       if n else f'<font color="{hex_m}">{n}</font>')
+                return Paragraph(txt, STYLES["td_c"])
 
             rows.append([
-                Paragraph(display_name, self.styles["table_cell"]),
-                status,
-                Paragraph(str(c), ParagraphStyle("sc", fontSize=8, textColor=SEVERITY_COLORS["CRITICAL"] if c else TEXT_MUTED, alignment=TA_CENTER, fontName="Helvetica-Bold" if c else "Helvetica")),
-                Paragraph(str(h), ParagraphStyle("sh", fontSize=8, textColor=SEVERITY_COLORS["HIGH"] if h else TEXT_MUTED, alignment=TA_CENTER, fontName="Helvetica-Bold" if h else "Helvetica")),
-                Paragraph(str(m), ParagraphStyle("sm", fontSize=8, textColor=SEVERITY_COLORS["MEDIUM"] if m else TEXT_MUTED, alignment=TA_CENTER, fontName="Helvetica-Bold" if m else "Helvetica")),
-                Paragraph(str(len(findings)), ParagraphStyle("st", fontSize=8, textColor=TEXT_PRIMARY, alignment=TA_CENTER, fontName="Helvetica-Bold")),
+                Paragraph(label, STYLES["td_bold"]), st_p,
+                cp(cc, C["sev_critical"]), cp(hh, C["sev_high"]),
+                cp(med_count, C["sev_medium"]),   cp(ll, C["sev_low"]),
+                Paragraph(f"<b>{tt}</b>", STYLES["td_c"]),
             ])
 
-        col_widths = [55*mm, 25*mm, 25*mm, 25*mm, 25*mm, 25*mm]
-        summary_table = Table(rows, colWidths=col_widths)
-        summary_table.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), ACCENT_CYAN),
-            ("BACKGROUND", (0, 1), (-1, -1), DARK_SURFACE),
-            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [DARK_SURFACE, HexColor("#1A2030")]),
-            ("TOPPADDING", (0, 0), (-1, -1), 6),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-            ("LEFTPADDING", (0, 0), (-1, -1), 8),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-            ("GRID", (0, 0), (-1, -1), 0.3, TEXT_MUTED),
-            ("BOX", (0, 0), (-1, -1), 1, ACCENT_CYAN),
-        ]))
-        elements.append(summary_table)
+        t = Table(rows, colWidths=[48*mm, 22*mm, 18*mm, 18*mm, 18*mm, 18*mm, 18*mm])
+        t.setStyle(tbl_style())
+        e.append(t)
+        return e
 
-        return elements
+    # ── Findings ─────────────────────────────────────────────────────────────
 
-    def _build_findings_detail(self) -> list:
-        elements = []
-        elements.append(Paragraph("2. Détail des Vulnérabilités", self.styles["section_title"]))
-        elements.append(HRFlowable(width="100%", thickness=1, color=ACCENT_CYAN, spaceAfter=10))
+    def _findings_detail(self):
+        e = []
+        e += section_header("02 — Détail des Vulnérabilités",
+                             f"{len(self.all_findings)} problème(s) identifié(s) et classifié(s).")
 
-        all_findings = self._get_all_findings()
+        if not self.all_findings:
+            e.append(Paragraph("Aucune vulnérabilité détectée.", STYLES["body"]))
+            return e
 
-        if not all_findings:
-            elements.append(Paragraph("Aucune vulnérabilité significative détectée.", self.styles["body"]))
-            return elements
-
-        for severity in ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]:
-            sev_findings = [f for f in all_findings if f.get("severity") == severity]
-            if not sev_findings:
+        for sev in ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]:
+            group = [f for f in self.all_findings if f.get("severity") == sev]
+            if not group:
                 continue
+            col = SEV_COLOR[sev]
+            bg  = SEV_BG[sev]
+            lbl = SEV_LABEL[sev]
 
-            color = SEVERITY_COLORS[severity]
-            bg_color = SEVERITY_BG_COLORS[severity]
-
-            # En-tête de section sévérité
-            sev_header = Table(
-                [[Paragraph(f"  {severity} — {len(sev_findings)} finding(s)",
-                           ParagraphStyle("sh", fontSize=11, fontName="Helvetica-Bold",
-                                         textColor=color))]],
-                colWidths=[W - 30*mm]
+            gh = Table(
+                [[
+                    SeverityPill(sev, w=74, h=22),
+                    Paragraph(
+                        f'<font color="{col.hexval()}"><b>{lbl}</b></font>'
+                        f'<font color="{C["text3"].hexval()}"> — {len(group)} finding(s)</font>',
+                        S("gh", fontSize=11, fontName="Helvetica-Bold", leading=16)
+                    ),
+                ]],
+                colWidths=[84*mm, W - 114*mm]
             )
-            sev_header.setStyle(TableStyle([
-                ("BACKGROUND", (0, 0), (-1, -1), bg_color),
-                ("TOPPADDING", (0, 0), (-1, -1), 8),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
-                ("BOX", (0, 0), (-1, -1), 1.5, color),
-                ("LEFTPADDING", (0, 0), (-1, -1), 10),
+            gh.setStyle(TableStyle([
+                ("BACKGROUND",    (0, 0), (-1, -1), bg),
+                ("TOPPADDING",    (0, 0), (-1, -1), 9),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 9),
+                ("LEFTPADDING",   (0, 0), (-1, -1), 10),
+                ("BOX",           (0, 0), (-1, -1), 1.2, col),
+                ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
             ]))
-            elements.append(Spacer(1, 5*mm))
-            elements.append(sev_header)
-            elements.append(Spacer(1, 4*mm))
+            e += [Spacer(1, 4*mm), gh, Spacer(1, 3*mm)]
 
-            for i, finding in enumerate(sev_findings):
-                finding_block = self._build_finding_card(finding, i + 1, color, bg_color)
-                elements.append(KeepTogether(finding_block))
-                elements.append(Spacer(1, 3*mm))
+            for i, f in enumerate(group):
+                e.append(KeepTogether(self._finding_card(f, i + 1, col, bg)))
+                e.append(Spacer(1, 2.5*mm))
 
-        return elements
+        return e
 
-    def _build_finding_card(self, finding: dict, num: int, color, bg_color) -> list:
-        elements = []
-        title = finding.get("title", "Vulnérabilité")
-        description = finding.get("description", "")
-        recommendation = finding.get("recommendation", "")
-        port = finding.get("port", "")
-        cves = finding.get("cves", [])
-        score = finding.get("score", "")
+    def _finding_card(self, f, num, col, bg):
+        title  = f.get("title", "Vulnérabilité")
+        desc   = f.get("description", "")
+        reco   = f.get("recommendation", "")
+        port   = f.get("port", "")
+        cves   = f.get("cves", [])
+        score  = f.get("score", "")
+        module = f.get("_module", "").upper()
 
-        # En-tête du finding
-        header_content = [
-            [
-                Paragraph(f"#{num:02d}", ParagraphStyle("fn", fontSize=9, fontName="Helvetica-Bold",
-                           textColor=color)),
-                Paragraph(title, ParagraphStyle("ft", fontSize=10, fontName="Helvetica-Bold",
-                           textColor=TEXT_PRIMARY, leading=14)),
-                Paragraph(f"Port: {port}" if port else "",
-                          ParagraphStyle("fp", fontSize=8, fontName="Helvetica",
-                           textColor=TEXT_MUTED, alignment=TA_RIGHT)),
-            ]
-        ]
-        header_table = Table(header_content, colWidths=[12*mm, W - 60*mm, 25*mm])
-        header_table.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), bg_color),
-            ("TOPPADDING", (0, 0), (-1, -1), 8),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
-            ("LEFTPADDING", (0, 0), (-1, -1), 8),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-            ("LINEBELOW", (0, 0), (-1, -1), 0.5, color),
+        meta = " · ".join(filter(None, [
+            f"Port: {port}" if port else "",
+            f"Module: {module}" if module else "",
         ]))
-        elements.append(header_table)
 
-        # Corps du finding
+        hdr = Table(
+            [[
+                Paragraph(
+                    f'<font color="{col.hexval()}">#{num:02d}</font>  {title}',
+                    STYLES["finding_t"]
+                ),
+                Paragraph(meta, S("hr", fontSize=7.5, textColor=C["text3"],
+                                  alignment=TA_RIGHT, leading=12)),
+            ]],
+            colWidths=[W - 80*mm, 42*mm]
+        )
+        hdr.setStyle(TableStyle([
+            ("BACKGROUND",    (0, 0), (-1, -1), bg),
+            ("TOPPADDING",    (0, 0), (-1, -1), 8),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 10),
+            ("RIGHTPADDING",  (0, 0), (-1, -1), 8),
+            ("LINEBELOW",     (0, 0), (-1, -1), 0.8, col),
+            ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+        ]))
+
         body_rows = []
-
-        if description:
+        if desc:
             body_rows.append([
-                Paragraph("Description:", ParagraphStyle("lbl", fontSize=8, fontName="Helvetica-Bold",
-                           textColor=TEXT_SECONDARY)),
-                Paragraph(description[:600], self.styles["finding_desc"]),
+                Paragraph("Description", S("lk", fontSize=7.5, fontName="Helvetica-Bold",
+                           textColor=C["text3"])),
+                Paragraph(desc[:700], STYLES["finding_d"]),
             ])
-
-        if recommendation:
+        if reco:
             body_rows.append([
-                Paragraph("Recommandation:", ParagraphStyle("lbl2", fontSize=8, fontName="Helvetica-Bold",
-                           textColor=ACCENT_GREEN)),
-                Paragraph(recommendation, self.styles["finding_reco"]),
+                Paragraph("Recommandation", S("lk2", fontSize=7.5, fontName="Helvetica-Bold",
+                           textColor=C["green"])),
+                Paragraph(reco, STYLES["finding_r"]),
             ])
-
         if cves:
-            cve_str = ", ".join(cves[:5])
             body_rows.append([
-                Paragraph("CVE(s):", ParagraphStyle("lbl3", fontSize=8, fontName="Helvetica-Bold",
-                           textColor=ACCENT_ORANGE)),
-                Paragraph(cve_str, ParagraphStyle("cv", fontSize=8, fontName="Courier",
-                           textColor=ACCENT_ORANGE, leading=12)),
+                Paragraph("CVE(s)", S("lk3", fontSize=7.5, fontName="Helvetica-Bold",
+                           textColor=C["orange"])),
+                Paragraph(", ".join(cves[:6]),
+                          S("cv", fontSize=8, fontName="Courier",
+                            textColor=C["orange"], leading=12)),
             ])
-
         if score:
             body_rows.append([
-                Paragraph("Score CVSS:", ParagraphStyle("lbl4", fontSize=8, fontName="Helvetica-Bold",
-                           textColor=TEXT_MUTED)),
-                Paragraph(str(score), ParagraphStyle("sc", fontSize=8, fontName="Helvetica-Bold",
-                           textColor=color)),
+                Paragraph("Score CVSS", S("lk4", fontSize=7.5, fontName="Helvetica-Bold",
+                           textColor=C["text3"])),
+                Paragraph(f'<font color="{col.hexval()}"><b>{score}</b></font> / 10',
+                          S("sv", fontSize=9, fontName="Helvetica-Bold", leading=12)),
             ])
 
+        elems = [hdr]
         if body_rows:
-            body_table = Table(body_rows, colWidths=[30*mm, W - 60*mm])
-            body_table.setStyle(TableStyle([
-                ("BACKGROUND", (0, 0), (-1, -1), DARK_SURFACE),
-                ("TOPPADDING", (0, 0), (-1, -1), 6),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-                ("LEFTPADDING", (0, 0), (-1, -1), 10),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-                ("LINEBELOW", (0, 0), (-1, -2), 0.3, TEXT_MUTED),
-                ("BOX", (0, 0), (-1, -1), 0.5, bg_color),
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            bt = Table(body_rows, colWidths=[32*mm, W - 62*mm])
+            bt.setStyle(TableStyle([
+                ("BACKGROUND",    (0, 0), (-1, -1), C["surface"]),
+                ("TOPPADDING",    (0, 0), (-1, -1), 7),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+                ("LEFTPADDING",   (0, 0), (-1, -1), 10),
+                ("RIGHTPADDING",  (0, 0), (-1, -1), 8),
+                ("LINEBELOW",     (0, 0), (-1, -2), 0.3, C["border"]),
+                ("BOX",           (0, 0), (-1, -1), 0.5, bg),
+                ("VALIGN",        (0, 0), (-1, -1), "TOP"),
             ]))
-            elements.append(body_table)
+            elems.append(bt)
+        return elems
 
-        return elements
+    # ── Réseau ────────────────────────────────────────────────────────────────
 
-    def _build_network_section(self) -> list:
-        elements = []
-        elements.append(Paragraph("3. Analyse Réseau & Ports", self.styles["section_title"]))
-        elements.append(HRFlowable(width="100%", thickness=1, color=ACCENT_CYAN, spaceAfter=10))
+    def _network_section(self):
+        e = []
+        e += section_header("03 — Analyse Réseau & Ports")
 
-        # Ports ouverts
-        ports_data = self.results.get("modules", {}).get("ports", {})
-        network_data = self.results.get("modules", {}).get("network", {})
-
-        open_ports = ports_data.get("open_ports", []) or network_data.get("open_ports", [])
-        os_info = network_data.get("os_info", {})
+        ports_data   = self.r.get("modules", {}).get("ports", {})
+        network_data = self.r.get("modules", {}).get("network", {})
+        open_ports   = network_data.get("open_ports", []) or ports_data.get("open_ports", [])
+        os_info      = network_data.get("os_info", {})
 
         if os_info:
-            elements.append(Paragraph("Détection du système d'exploitation", self.styles["subsection_title"]))
-            os_text = f"OS détecté: <b>{os_info.get('name', 'Inconnu')}</b> (précision: {os_info.get('accuracy', '?')}%)"
-            elements.append(Paragraph(os_text, self.styles["body"]))
-            elements.append(Spacer(1, 4*mm))
+            e.append(Paragraph("Système d'exploitation", STYLES["subsection"]))
+            e += kv_block([
+                ("OS DÉTECTÉ", os_info.get("name", "Inconnu")),
+                ("PRÉCISION",  f"{os_info.get('accuracy', '?')}%"),
+            ], cols=2)
 
-        elements.append(Paragraph(f"Ports ouverts ({len(open_ports)} détectés)", self.styles["subsection_title"]))
+        e.append(Paragraph(f"Ports ouverts — {len(open_ports)} détecté(s)", STYLES["subsection"]))
 
-        if open_ports:
-            header = [
-                Paragraph("Port", self.styles["table_header"]),
-                Paragraph("Protocole", self.styles["table_header"]),
-                Paragraph("Service", self.styles["table_header"]),
-                Paragraph("Version/Produit", self.styles["table_header"]),
-                Paragraph("Risque", self.styles["table_header"]),
-            ]
-            rows = [header]
+        if not open_ports:
+            e.append(Paragraph("Aucun port ouvert détecté.", STYLES["body"]))
+            return e
 
-            high_risk_ports = {21, 23, 25, 135, 139, 445, 3389, 4444, 5900, 6379, 9200, 27017, 2375}
+        RISKY = {21, 23, 25, 135, 139, 445, 1433, 3306, 3389, 4444, 5432, 5900, 6379, 9200, 27017, 2375}
+        hdr = [Paragraph(t, STYLES["th"]) for t in
+               ["Port", "Proto", "Service", "Version / Banner", "Risque"]]
+        rows = [hdr]
+        for p in open_ports[:60]:
+            pn    = p.get("port", 0)
+            risky = pn in RISKY
+            rc    = C["sev_high"] if risky else C["sev_low"]
+            rt    = "⚠ Élevé" if risky else "✓ Normal"
+            ver   = str(p.get("full_version", p.get("banner", "")))[:55]
+            rows.append([
+                Paragraph(f'<font color="{C["accent"].hexval()}"><b>{pn}</b></font>', STYLES["td_c"]),
+                Paragraph(str(p.get("protocol", "tcp")), STYLES["td_c"]),
+                Paragraph(str(p.get("service", "?")), STYLES["td_bold"]),
+                Paragraph(ver or "—", STYLES["td"]),
+                Paragraph(f'<font color="{rc.hexval()}"><b>{rt}</b></font>', STYLES["td_c"]),
+            ])
+        t = Table(rows, colWidths=[16*mm, 16*mm, 28*mm, 85*mm, 20*mm])
+        t.setStyle(tbl_style())
+        e.append(t)
+        return e
 
-            for p in open_ports[:50]:
-                port_num = p.get("port", 0)
-                is_risky = port_num in high_risk_ports
-                risk_text = "⚠ Élevé" if is_risky else "Normal"
-                risk_color = SEVERITY_COLORS["HIGH"] if is_risky else ACCENT_GREEN
+    # ── HTTP ──────────────────────────────────────────────────────────────────
 
-                rows.append([
-                    Paragraph(str(port_num), ParagraphStyle("pc", fontSize=8, fontName="Helvetica-Bold",
-                               textColor=ACCENT_CYAN, alignment=TA_CENTER)),
-                    Paragraph(str(p.get("protocol", "tcp")), self.styles["table_cell_center"]),
-                    Paragraph(str(p.get("service", "?")), self.styles["table_cell"]),
-                    Paragraph(str(p.get("full_version", p.get("banner", "")))[:60], self.styles["table_cell"]),
-                    Paragraph(risk_text, ParagraphStyle("pr", fontSize=8, textColor=risk_color, alignment=TA_CENTER)),
-                ])
+    def _http_section(self):
+        e = []
+        e += section_header("04 — Analyse HTTP / HTTPS")
 
-            port_table = Table(rows, colWidths=[18*mm, 22*mm, 28*mm, 85*mm, 22*mm])
-            port_table.setStyle(TableStyle([
-                ("BACKGROUND", (0, 0), (-1, 0), ACCENT_CYAN),
-                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [DARK_SURFACE, HexColor("#1A2030")]),
-                ("TOPPADDING", (0, 0), (-1, -1), 5),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-                ("LEFTPADDING", (0, 0), (-1, -1), 6),
-                ("GRID", (0, 0), (-1, -1), 0.3, TEXT_MUTED),
-                ("BOX", (0, 0), (-1, -1), 1, ACCENT_BLUE),
-            ]))
-            elements.append(port_table)
-        else:
-            elements.append(Paragraph("Aucun port ouvert détecté ou scan non disponible.", self.styles["body"]))
+        http = self.r.get("modules", {}).get("http", {})
+        if http.get("error"):
+            e.append(Paragraph(f"Module HTTP indisponible : {http['error']}", STYLES["body"]))
+            return e
 
-        return elements
-
-    def _build_http_section(self) -> list:
-        elements = []
-        elements.append(Paragraph("4. Analyse HTTP/HTTPS", self.styles["section_title"]))
-        elements.append(HRFlowable(width="100%", thickness=1, color=ACCENT_CYAN, spaceAfter=10))
-
-        http_data = self.results.get("modules", {}).get("http", {})
-        if http_data.get("error"):
-            elements.append(Paragraph(f"Erreur: {http_data['error']}", self.styles["body"]))
-            return elements
-
-        # Technologies détectées
-        techs = http_data.get("technologies", [])
+        techs = http.get("technologies", [])
         if techs:
-            elements.append(Paragraph("Technologies détectées", self.styles["subsection_title"]))
-            tech_rows = [[
-                Paragraph("Technologie", self.styles["table_header"]),
-                Paragraph("Source", self.styles["table_header"]),
-                Paragraph("Valeur", self.styles["table_header"]),
-            ]]
+            e.append(Paragraph("Technologies détectées", STYLES["subsection"]))
+            hdr = [Paragraph(t, STYLES["th"]) for t in ["Technologie", "Source", "Valeur"]]
+            rows = [hdr]
             for t in techs:
-                tech_rows.append([
-                    Paragraph(t.get("name", ""), self.styles["table_cell"]),
-                    Paragraph(t.get("source", ""), self.styles["table_cell"]),
-                    Paragraph(str(t.get("value", ""))[:80], self.styles["table_cell"]),
+                rows.append([
+                    Paragraph(t.get("name", ""), STYLES["td_bold"]),
+                    Paragraph(t.get("source", ""), STYLES["td"]),
+                    Paragraph(str(t.get("value", ""))[:80], STYLES["td"]),
                 ])
-            tech_table = Table(tech_rows, colWidths=[50*mm, 50*mm, 75*mm])
-            tech_table.setStyle(TableStyle([
-                ("BACKGROUND", (0, 0), (-1, 0), ACCENT_BLUE),
-                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [DARK_SURFACE, HexColor("#1A2030")]),
-                ("TOPPADDING", (0, 0), (-1, -1), 5),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-                ("LEFTPADDING", (0, 0), (-1, -1), 6),
-                ("GRID", (0, 0), (-1, -1), 0.3, TEXT_MUTED),
-                ("BOX", (0, 0), (-1, -1), 1, ACCENT_BLUE),
-            ]))
-            elements.append(tech_table)
-            elements.append(Spacer(1, 5*mm))
+            tbl = Table(rows, colWidths=[50*mm, 50*mm, 65*mm])
+            tbl.setStyle(tbl_style(C["accent2"]))
+            e.append(tbl)
+            e.append(Spacer(1, 5*mm))
 
-        # Headers de sécurité
-        headers_analysis = http_data.get("headers_analysis", [])
-        if headers_analysis:
-            elements.append(Paragraph("Analyse des en-têtes de sécurité", self.styles["subsection_title"]))
-            h_rows = [[
-                Paragraph("En-tête HTTP", self.styles["table_header"]),
-                Paragraph("Statut", self.styles["table_header"]),
-                Paragraph("Valeur", self.styles["table_header"]),
-            ]]
-            for h in headers_analysis:
-                status = h.get("status", "")
-                status_color = ACCENT_GREEN if status == "présent" else SEVERITY_COLORS["HIGH"]
-                h_rows.append([
-                    Paragraph(h.get("header", ""), self.styles["table_cell"]),
-                    Paragraph(status.upper(), ParagraphStyle("hs", fontSize=8, textColor=status_color,
-                               alignment=TA_CENTER, fontName="Helvetica-Bold")),
-                    Paragraph(str(h.get("value", "N/A"))[:80], self.styles["table_cell"]),
+        headers = http.get("headers_analysis", [])
+        if headers:
+            e.append(Paragraph("En-têtes de sécurité HTTP", STYLES["subsection"]))
+            hdr = [Paragraph(t, STYLES["th"]) for t in ["En-tête", "Statut", "Valeur"]]
+            rows = [hdr]
+            for h in headers:
+                present = h.get("status") == "présent"
+                sc  = C["sev_low"] if present else C["sev_high"]
+                st  = "✓ Présent" if present else "✗ Absent"
+                rows.append([
+                    Paragraph(h.get("header", ""), STYLES["td_bold"]),
+                    Paragraph(f'<font color="{sc.hexval()}"><b>{st}</b></font>', STYLES["td_c"]),
+                    Paragraph(str(h.get("value", "N/A"))[:75], STYLES["td"]),
                 ])
-            h_table = Table(h_rows, colWidths=[60*mm, 25*mm, 90*mm])
-            h_table.setStyle(TableStyle([
-                ("BACKGROUND", (0, 0), (-1, 0), ACCENT_BLUE),
-                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [DARK_SURFACE, HexColor("#1A2030")]),
-                ("TOPPADDING", (0, 0), (-1, -1), 5),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-                ("LEFTPADDING", (0, 0), (-1, -1), 6),
-                ("GRID", (0, 0), (-1, -1), 0.3, TEXT_MUTED),
-                ("BOX", (0, 0), (-1, -1), 1, ACCENT_BLUE),
-            ]))
-            elements.append(h_table)
+            tbl = Table(rows, colWidths=[60*mm, 28*mm, 77*mm])
+            tbl.setStyle(tbl_style(C["accent2"]))
+            e.append(tbl)
 
-        return elements
+        srv = http.get("server_info", {})
+        if srv:
+            e.append(Spacer(1, 4*mm))
+            e.append(Paragraph("Informations serveur", STYLES["subsection"]))
+            items = []
+            if srv.get("server"):       items.append(("SERVER",       srv["server"]))
+            if srv.get("x_powered_by"): items.append(("X-POWERED-BY", srv["x_powered_by"]))
+            if items:
+                e += kv_block(items, cols=2)
+        return e
 
-    def _build_ssl_section(self) -> list:
-        elements = []
-        elements.append(Paragraph("5. Analyse SSL/TLS", self.styles["section_title"]))
-        elements.append(HRFlowable(width="100%", thickness=1, color=ACCENT_CYAN, spaceAfter=10))
+    # ── SSL ───────────────────────────────────────────────────────────────────
 
-        ssl_data = self.results.get("modules", {}).get("ssl", {})
+    def _ssl_section(self):
+        e = []
+        e += section_header("05 — Analyse SSL / TLS")
+
+        ssl_data  = self.r.get("modules", {}).get("ssl", {})
         cert_info = ssl_data.get("cert_info", {})
-        tls_info = ssl_data.get("tls_info", {})
+        tls_info  = ssl_data.get("tls_info", {})
 
         if cert_info:
-            elements.append(Paragraph("Informations du certificat", self.styles["subsection_title"]))
-            cert_rows = [
-                ["Champ", "Valeur"],
-                ["Common Name (CN)", cert_info.get("common_name", "N/A")],
-                ["Émetteur", cert_info.get("issuer_name", "N/A")],
-                ["Valide depuis", cert_info.get("valid_from", "N/A")],
-                ["Expiration", cert_info.get("expiry_date", "N/A")],
-                ["Jours restants", str(cert_info.get("days_until_expiry", "N/A"))],
-                ["SANs", ", ".join(cert_info.get("san", [])[:5])],
-                ["Numéro de série", cert_info.get("serial_number", "N/A")],
-            ]
-            formatted_rows = []
-            for i, row in enumerate(cert_rows):
-                if i == 0:
-                    formatted_rows.append([
-                        Paragraph(row[0], self.styles["table_header"]),
-                        Paragraph(row[1], self.styles["table_header"]),
-                    ])
-                else:
-                    formatted_rows.append([
-                        Paragraph(row[0], ParagraphStyle("cl", fontSize=8, fontName="Helvetica-Bold",
-                                   textColor=TEXT_SECONDARY)),
-                        Paragraph(str(row[1])[:120], self.styles["table_cell"]),
-                    ])
-
-            cert_table = Table(formatted_rows, colWidths=[55*mm, 120*mm])
-            cert_table.setStyle(TableStyle([
-                ("BACKGROUND", (0, 0), (-1, 0), ACCENT_CYAN),
-                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [DARK_SURFACE, HexColor("#1A2030")]),
-                ("TOPPADDING", (0, 0), (-1, -1), 6),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-                ("LEFTPADDING", (0, 0), (-1, -1), 8),
-                ("GRID", (0, 0), (-1, -1), 0.3, TEXT_MUTED),
-                ("BOX", (0, 0), (-1, -1), 1, ACCENT_CYAN),
-            ]))
-            elements.append(cert_table)
-            elements.append(Spacer(1, 5*mm))
+            e.append(Paragraph("Certificat SSL", STYLES["subsection"]))
+            e += kv_block([
+                ("COMMON NAME (CN)", cert_info.get("common_name", "N/A")),
+                ("ÉMETTEUR",         cert_info.get("issuer_name", "N/A")),
+                ("VALIDE DEPUIS",    cert_info.get("valid_from", "N/A")),
+                ("EXPIRATION",       cert_info.get("expiry_date", "N/A")),
+                ("JOURS RESTANTS",   str(cert_info.get("days_until_expiry", "N/A"))),
+                ("SANs",             ", ".join(cert_info.get("san", [])[:4])),
+            ], cols=3)
 
         if tls_info:
-            elements.append(Paragraph("Configuration TLS", self.styles["subsection_title"]))
+            e.append(Paragraph("Configuration TLS", STYLES["subsection"]))
             proto = tls_info.get("protocol", "N/A")
-            cipher = tls_info.get("cipher_suite", "N/A")
-            bits = tls_info.get("cipher_bits", 0)
+            pc    = C["sev_low"] if proto in ["TLSv1.2", "TLSv1.3"] else C["sev_high"]
+            e += kv_block([
+                ("PROTOCOLE",    proto),
+                ("CIPHER SUITE", tls_info.get("cipher_suite", "N/A")),
+                ("FORCE (BITS)", str(tls_info.get("cipher_bits", 0))),
+            ], cols=3)
+        return e
 
-            proto_color = ACCENT_GREEN if proto in ["TLSv1.2", "TLSv1.3"] else SEVERITY_COLORS["HIGH"]
-            tls_rows = [
-                [Paragraph("Protocole TLS", ParagraphStyle("tl", fontSize=8, fontName="Helvetica-Bold", textColor=TEXT_SECONDARY)),
-                 Paragraph(proto, ParagraphStyle("tv", fontSize=9, fontName="Helvetica-Bold", textColor=proto_color))],
-                [Paragraph("Cipher Suite", ParagraphStyle("tl2", fontSize=8, fontName="Helvetica-Bold", textColor=TEXT_SECONDARY)),
-                 Paragraph(str(cipher), self.styles["table_cell"])],
-                [Paragraph("Force du chiffrement", ParagraphStyle("tl3", fontSize=8, fontName="Helvetica-Bold", textColor=TEXT_SECONDARY)),
-                 Paragraph(f"{bits} bits", self.styles["table_cell"])],
-            ]
-            tls_table = Table(tls_rows, colWidths=[55*mm, 120*mm])
-            tls_table.setStyle(TableStyle([
-                ("BACKGROUND", (0, 0), (-1, -1), DARK_SURFACE),
-                ("TOPPADDING", (0, 0), (-1, -1), 7),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
-                ("LEFTPADDING", (0, 0), (-1, -1), 10),
-                ("LINEBELOW", (0, 0), (-1, -2), 0.3, TEXT_MUTED),
-                ("BOX", (0, 0), (-1, -1), 1, ACCENT_CYAN),
-            ]))
-            elements.append(tls_table)
+    # ── DNS ───────────────────────────────────────────────────────────────────
 
-        return elements
+    def _dns_section(self):
+        e = []
+        e += section_header("06 — Analyse DNS & WHOIS")
 
-    def _build_dns_section(self) -> list:
-        elements = []
-        elements.append(Paragraph("6. Analyse DNS", self.styles["section_title"]))
-        elements.append(HRFlowable(width="100%", thickness=1, color=ACCENT_CYAN, spaceAfter=10))
-
-        dns_data = self.results.get("modules", {}).get("dns", {})
-        records = dns_data.get("records", {})
+        dns_data   = self.r.get("modules", {}).get("dns", {})
+        whois_data = self.r.get("modules", {}).get("whois", {}).get("whois_info", {})
+        records    = dns_data.get("records", {})
         subdomains = dns_data.get("subdomains_found", [])
-        whois_data = self.results.get("modules", {}).get("whois", {}).get("whois_info", {})
 
-        # Infos WHOIS
         if whois_data:
-            elements.append(Paragraph("Informations WHOIS", self.styles["subsection_title"]))
-            whois_items = [
-                ("Domaine", whois_data.get("domain", "N/A")),
-                ("IP résolue", whois_data.get("resolved_ip", "N/A")),
-                ("Reverse DNS", whois_data.get("reverse_dns", "N/A")),
-                ("Registrar", whois_data.get("registrar", "N/A")),
-                ("Organisation", whois_data.get("org", "N/A")),
-                ("Pays", whois_data.get("country", "N/A")),
-                ("Création", whois_data.get("creation_date", "N/A")),
-                ("Expiration domaine", whois_data.get("expiration_date", "N/A")),
-            ]
-            whois_rows = [[
-                Paragraph(k, ParagraphStyle("wk", fontSize=8, fontName="Helvetica-Bold", textColor=TEXT_SECONDARY)),
-                Paragraph(str(v)[:100], self.styles["table_cell"])
-            ] for k, v in whois_items]
-            whois_table = Table(whois_rows, colWidths=[45*mm, 130*mm])
-            whois_table.setStyle(TableStyle([
-                ("BACKGROUND", (0, 0), (-1, -1), DARK_SURFACE),
-                ("TOPPADDING", (0, 0), (-1, -1), 5),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-                ("LEFTPADDING", (0, 0), (-1, -1), 8),
-                ("LINEBELOW", (0, 0), (-1, -2), 0.3, TEXT_MUTED),
-                ("BOX", (0, 0), (-1, -1), 1, ACCENT_BLUE),
-            ]))
-            elements.append(whois_table)
-            elements.append(Spacer(1, 5*mm))
+            e.append(Paragraph("Informations WHOIS", STYLES["subsection"]))
+            e += kv_block([
+                ("DOMAINE",      whois_data.get("domain", "N/A")),
+                ("IP RÉSOLUE",   whois_data.get("resolved_ip", "N/A")),
+                ("REGISTRAR",    whois_data.get("registrar", "N/A")),
+                ("ORGANISATION", whois_data.get("org", "N/A")),
+                ("CRÉATION",     whois_data.get("creation_date", "N/A")),
+                ("EXPIRATION",   whois_data.get("expiration_date", "N/A")),
+            ], cols=3)
 
-        # Enregistrements DNS
         if records:
-            elements.append(Paragraph("Enregistrements DNS", self.styles["subsection_title"]))
-            for rtype, rvals in records.items():
-                if not rvals:
-                    continue
-                elements.append(Paragraph(f"▸ {rtype}", ParagraphStyle("rt", fontSize=9, fontName="Helvetica-Bold",
-                                          textColor=ACCENT_CYAN, spaceAfter=2)))
-                for val in rvals[:5]:
-                    elements.append(Paragraph(f"  {val}", self.styles["code"]))
-            elements.append(Spacer(1, 4*mm))
+            e.append(Paragraph("Enregistrements DNS", STYLES["subsection"]))
+            for rtype, vals in records.items():
+                if not vals: continue
+                e.append(Paragraph(
+                    f'<font color="{C["accent"].hexval()}"><b>{rtype}</b></font>',
+                    S("rt", fontSize=9, fontName="Helvetica-Bold", leading=14, spaceAfter=2)
+                ))
+                for v in vals[:6]:
+                    e.append(Paragraph(f"  {v}", STYLES["code"]))
+            e.append(Spacer(1, 3*mm))
 
-        # Sous-domaines découverts
         if subdomains:
-            elements.append(Paragraph(f"Sous-domaines découverts ({len(subdomains)})", self.styles["subsection_title"]))
-            sub_rows = [[
-                Paragraph("Sous-domaine", self.styles["table_header"]),
-                Paragraph("IP(s)", self.styles["table_header"]),
-            ]]
+            e.append(Paragraph(f"Sous-domaines découverts ({len(subdomains)})", STYLES["subsection"]))
+            hdr = [Paragraph(t, STYLES["th"]) for t in ["Sous-domaine", "IP(s)"]]
+            rows = [hdr]
             for s in subdomains[:30]:
-                sub_rows.append([
-                    Paragraph(s.get("subdomain", ""), ParagraphStyle("sd", fontSize=8, fontName="Courier",
-                               textColor=ACCENT_CYAN)),
-                    Paragraph(", ".join(s.get("ips", [])), self.styles["table_cell"]),
+                rows.append([
+                    Paragraph(s.get("subdomain", ""),
+                              S("sd", fontSize=8, fontName="Courier",
+                                textColor=C["accent"], leading=11)),
+                    Paragraph(", ".join(s.get("ips", [])), STYLES["td"]),
                 ])
-            sub_table = Table(sub_rows, colWidths=[100*mm, 75*mm])
-            sub_table.setStyle(TableStyle([
-                ("BACKGROUND", (0, 0), (-1, 0), ACCENT_BLUE),
-                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [DARK_SURFACE, HexColor("#1A2030")]),
-                ("TOPPADDING", (0, 0), (-1, -1), 5),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-                ("LEFTPADDING", (0, 0), (-1, -1), 8),
-                ("GRID", (0, 0), (-1, -1), 0.3, TEXT_MUTED),
-                ("BOX", (0, 0), (-1, -1), 1, ACCENT_BLUE),
-            ]))
-            elements.append(sub_table)
+            t = Table(rows, colWidths=[100*mm, 65*mm])
+            t.setStyle(tbl_style(C["accent2"]))
+            e.append(t)
+        return e
 
-        return elements
+    # ── CVE ───────────────────────────────────────────────────────────────────
 
-    def _build_cve_section(self) -> list:
-        elements = []
-        elements.append(Paragraph("7. CVEs Identifiées", self.styles["section_title"]))
-        elements.append(HRFlowable(width="100%", thickness=1, color=ACCENT_CYAN, spaceAfter=10))
+    def _cve_section(self):
+        e = []
+        e += section_header("07 — CVEs Identifiées")
 
-        cve_data = self.results.get("modules", {}).get("cve", {})
-
+        cve_data = self.r.get("modules", {}).get("cve", {})
         if cve_data.get("skipped"):
-            elements.append(Paragraph("Lookup CVE désactivé pour ce scan.", self.styles["body"]))
-            return elements
+            e.append(Paragraph("Lookup CVE désactivé pour ce scan.", STYLES["body"]))
+            return e
 
         cves = cve_data.get("cves", [])
-        lookup_results = cve_data.get("lookup_results", [])
-
-        elements.append(Paragraph(
-            f"Total CVEs trouvées: <b>{len(cves)}</b> pour {cve_data.get('services_analyzed', 0)} service(s) analysé(s).",
-            self.styles["body"]
+        e.append(Paragraph(
+            f"<b>{len(cves)}</b> CVE(s) trouvée(s) pour "
+            f"<b>{cve_data.get('services_analyzed', 0)}</b> service(s) analysé(s).",
+            STYLES["body"]
         ))
-        elements.append(Spacer(1, 4*mm))
+        e.append(Spacer(1, 4*mm))
 
         if not cves:
-            elements.append(Paragraph("Aucune CVE connue trouvée pour les services détectés.", self.styles["body"]))
-            return elements
+            e.append(Paragraph("Aucune CVE connue pour les services détectés.", STYLES["body"]))
+            return e
 
-        # Tableau des CVEs
-        cve_rows = [[
-            Paragraph("CVE ID", self.styles["table_header"]),
-            Paragraph("Score", self.styles["table_header"]),
-            Paragraph("Sévérité", self.styles["table_header"]),
-            Paragraph("Description", self.styles["table_header"]),
-            Paragraph("Source", self.styles["table_header"]),
-        ]]
-
-        for cve in sorted(cves, key=lambda x: x.get("score", 0), reverse=True)[:40]:
-            sev = cve.get("severity", "MEDIUM")
-            sev_color = SEVERITY_COLORS.get(sev, TEXT_SECONDARY)
-            score = cve.get("score", 0)
-
-            cve_rows.append([
-                Paragraph(cve.get("id", ""), ParagraphStyle("ci", fontSize=7, fontName="Courier",
-                           textColor=ACCENT_ORANGE)),
-                Paragraph(str(score), ParagraphStyle("cs", fontSize=8, fontName="Helvetica-Bold",
-                           textColor=sev_color, alignment=TA_CENTER)),
-                Paragraph(sev, ParagraphStyle("csev", fontSize=7, fontName="Helvetica-Bold",
-                           textColor=sev_color, alignment=TA_CENTER)),
-                Paragraph(cve.get("description", "")[:150], self.styles["table_cell"]),
-                Paragraph(cve.get("source", ""), ParagraphStyle("csrc", fontSize=7, textColor=TEXT_MUTED)),
+        hdr = [Paragraph(t, STYLES["th"]) for t in
+               ["CVE ID", "Score", "Sévérité", "Description", "Source"]]
+        rows = [hdr]
+        for cv in sorted(cves, key=lambda x: x.get("score", 0), reverse=True)[:40]:
+            sev = cv.get("severity", "MEDIUM")
+            col = SEV_COLOR.get(sev, C["text2"])
+            sc  = cv.get("score", 0)
+            rows.append([
+                Paragraph(cv.get("id", ""),
+                          S("ci", fontSize=7.5, fontName="Courier",
+                            textColor=C["orange"], leading=11)),
+                Paragraph(f'<font color="{col.hexval()}"><b>{sc}</b></font>', STYLES["td_c"]),
+                Paragraph(f'<font color="{col.hexval()}"><b>{SEV_LABEL.get(sev, sev)}</b></font>',
+                          STYLES["td_c"]),
+                Paragraph(cv.get("description", "")[:150], STYLES["td"]),
+                Paragraph(cv.get("source", ""), STYLES["td"]),
             ])
 
-        cve_table = Table(cve_rows, colWidths=[28*mm, 14*mm, 18*mm, 95*mm, 20*mm])
-        cve_table.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), ACCENT_ORANGE),
-            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [DARK_SURFACE, HexColor("#1A2030")]),
-            ("TOPPADDING", (0, 0), (-1, -1), 5),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-            ("LEFTPADDING", (0, 0), (-1, -1), 5),
-            ("GRID", (0, 0), (-1, -1), 0.3, TEXT_MUTED),
-            ("BOX", (0, 0), (-1, -1), 1, ACCENT_ORANGE),
-            ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ]))
-        elements.append(cve_table)
-        return elements
+        t = Table(rows, colWidths=[28*mm, 14*mm, 20*mm, 90*mm, 13*mm])
+        t.setStyle(tbl_style(C["orange"]))
+        e.append(t)
+        return e
 
-    def _build_recommendations(self) -> list:
-        elements = []
-        elements.append(Paragraph("8. Recommandations Prioritaires", self.styles["section_title"]))
-        elements.append(HRFlowable(width="100%", thickness=1, color=ACCENT_CYAN, spaceAfter=10))
+    # ── Recommandations ───────────────────────────────────────────────────────
 
-        all_findings = self._get_all_findings()
-        critical_high = [f for f in all_findings if f.get("severity") in ["CRITICAL", "HIGH"]]
+    def _recommendations(self):
+        e = []
+        e += section_header("08 — Recommandations Prioritaires",
+                             "Actions correctives classées par ordre de priorité immédiate.")
+
+        critical_high = [f for f in self.all_findings
+                         if f.get("severity") in ["CRITICAL", "HIGH"]]
 
         if not critical_high:
-            elements.append(Paragraph(
-                "Aucune vulnérabilité critique ou élevée détectée. Maintenir la vigilance et effectuer des audits réguliers.",
-                self.styles["body"]
+            e.append(Paragraph(
+                "Aucune vulnérabilité critique ou élevée détectée. "
+                "Maintenir la surveillance et planifier des audits réguliers.",
+                STYLES["body"]
             ))
         else:
-            elements.append(Paragraph(
-                f"Les {len(critical_high)} recommandations suivantes doivent être traitées en priorité immédiate:",
-                self.styles["body"]
+            e.append(Paragraph(
+                f"Les <b>{len(critical_high)}</b> actions suivantes doivent être "
+                f"traitées en <b>priorité immédiate</b> :",
+                STYLES["body"]
             ))
-            elements.append(Spacer(1, 5*mm))
+            e.append(Spacer(1, 4*mm))
 
-            seen_recos = set()
-            counter = 1
-            for finding in critical_high[:20]:
-                reco = finding.get("recommendation", "")
-                if not reco or reco in seen_recos:
-                    continue
-                seen_recos.add(reco)
+            seen, n = set(), 1
+            for f in critical_high[:20]:
+                reco = f.get("recommendation", "")
+                if not reco or reco in seen: continue
+                seen.add(reco)
+                sev = f.get("severity", "HIGH")
+                col = SEV_COLOR.get(sev, C["text2"])
+                bg  = SEV_BG.get(sev, C["surface"])
 
-                sev = finding.get("severity", "HIGH")
-                color = SEVERITY_COLORS.get(sev, TEXT_SECONDARY)
-                bg = SEVERITY_BG_COLORS.get(sev, DARK_SURFACE)
-
-                reco_block = Table(
-                    [[
-                        Paragraph(f"{counter:02d}", ParagraphStyle("rn", fontSize=14, fontName="Helvetica-Bold",
-                                   textColor=color, alignment=TA_CENTER)),
-                        Paragraph(
-                            f"<b>{finding.get('title', '')}</b><br/>"
-                            f"<font color='#8B949E'>{reco}</font>",
-                            ParagraphStyle("rb", fontSize=9, fontName="Helvetica", textColor=ACCENT_GREEN,
-                                          leading=14)
-                        )
-                    ]],
-                    colWidths=[15*mm, W - 50*mm]
+                inner = Table(
+                    [[Paragraph(f.get("title", ""), STYLES["finding_t"])],
+                     [Paragraph(reco, STYLES["finding_r"])]],
+                    colWidths=[W - 68*mm]
                 )
-                reco_block.setStyle(TableStyle([
-                    ("BACKGROUND", (0, 0), (0, -1), bg),
-                    ("BACKGROUND", (1, 0), (-1, -1), DARK_SURFACE),
-                    ("TOPPADDING", (0, 0), (-1, -1), 8),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
-                    ("LEFTPADDING", (0, 0), (-1, -1), 8),
-                    ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-                    ("BOX", (0, 0), (-1, -1), 1, bg),
-                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                inner.setStyle(TableStyle([
+                    ("TOPPADDING",    (0, 0), (-1, -1), 0),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
                 ]))
-                elements.append(reco_block)
-                elements.append(Spacer(1, 3*mm))
-                counter += 1
+                card = Table(
+                    [[
+                        Paragraph(f'<font color="{col.hexval()}"><b>{n:02d}</b></font>',
+                                  S("rn", fontSize=18, fontName="Helvetica-Bold",
+                                    alignment=TA_CENTER, leading=22)),
+                        inner,
+                    ]],
+                    colWidths=[18*mm, W - 48*mm]
+                )
+                card.setStyle(TableStyle([
+                    ("BACKGROUND",    (0, 0), (0, -1), bg),
+                    ("BACKGROUND",    (1, 0), (1, -1), C["surface"]),
+                    ("TOPPADDING",    (0, 0), (-1, -1), 9),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 9),
+                    ("LEFTPADDING",   (0, 0), (-1, -1), 8),
+                    ("RIGHTPADDING",  (0, 0), (-1, -1), 8),
+                    ("BOX",           (0, 0), (-1, -1), 0.8, bg),
+                    ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+                ]))
+                e.append(card)
+                e.append(Spacer(1, 2.5*mm))
+                n += 1
 
-        # Bonnes pratiques générales
-        elements.append(Spacer(1, 8*mm))
-        elements.append(Paragraph("Bonnes pratiques générales", self.styles["subsection_title"]))
+        e.append(Spacer(1, 6*mm))
+        e.append(Paragraph("Bonnes pratiques générales", STYLES["subsection"]))
+        for icon, text in [
+            ("🔄", "Patch management mensuel — maintenir tous les composants à jour"),
+            ("🔐", "MFA sur tous les accès distants (VPN, RDP, SSH, panneaux admin)"),
+            ("📊", "SIEM pour la détection d'incidents en temps réel"),
+            ("🔍", "Tests d'intrusion réguliers (minimum trimestriels)"),
+            ("📋", "Inventaire des actifs et services exposés à jour en permanence"),
+            ("🛡", "WAF devant toutes les applications web exposées"),
+            ("📦", "Sauvegardes 3-2-1 chiffrées et testées régulièrement"),
+            ("👥", "Formation sécurité des équipes (phishing, mots de passe forts)"),
+        ]:
+            e.append(Paragraph(f"{icon}  {text}",
+                               S("bp", fontSize=9, textColor=C["text2"],
+                                 leading=16, leftIndent=5, spaceAfter=1)))
+        return e
 
-        best_practices = [
-            ("🔄", "Mettre en place un programme de gestion des correctifs (patch management) mensuel"),
-            ("🔐", "Implémenter une authentification multi-facteurs (MFA) sur tous les accès distants"),
-            ("📊", "Déployer un SIEM pour la détection d'incidents en temps réel"),
-            ("🔍", "Réaliser des tests d'intrusion réguliers (trimestriels minimum)"),
-            ("📋", "Maintenir un inventaire exhaustif des actifs et des services exposés"),
-            ("🛡", "Configurer un WAF (Web Application Firewall) devant les applications web"),
-            ("📦", "Mettre en place une politique de sauvegarde 3-2-1 testée régulièrement"),
-            ("👥", "Former les équipes aux bonnes pratiques de sécurité (phishing, mots de passe)"),
-        ]
+    # ── Méthodologie ──────────────────────────────────────────────────────────
 
-        for icon, practice in best_practices:
-            elements.append(Paragraph(
-                f"{icon}  {practice}",
-                ParagraphStyle("bp", fontSize=9, fontName="Helvetica", textColor=TEXT_SECONDARY,
-                               leading=16, leftIndent=5, spaceAfter=2)
-            ))
-
-        return elements
-
-    def _build_methodology(self) -> list:
-        elements = []
-        elements.append(Paragraph("9. Méthodologie", self.styles["section_title"]))
-        elements.append(HRFlowable(width="100%", thickness=1, color=ACCENT_CYAN, spaceAfter=10))
-
-        methodology_text = (
-            "L'audit a été réalisé à l'aide de l'outil VulnScan Pro v1.0, suivant une approche "
-            "systématique en plusieurs phases. L'ensemble des tests a été effectué depuis l'extérieur "
-            "(approche boîte noire / black-box) sauf indication contraire."
-        )
-        elements.append(Paragraph(methodology_text, self.styles["body"]))
-        elements.append(Spacer(1, 5*mm))
+    def _methodology(self):
+        e = []
+        e += section_header("09 — Méthodologie")
+        e.append(Paragraph(
+            "L'audit a été conduit via <b>VulnScan Pro v1.0</b> (by hawkz) selon une approche "
+            "black-box structurée en quatre phases. Tous les tests ont été réalisés depuis "
+            "l'extérieur du périmètre sans accès privilégié préalable.",
+            STYLES["body"]
+        ))
+        e.append(Spacer(1, 4*mm))
 
         phases = [
-            ("Phase 1 — Reconnaissance", [
-                "Collecte d'informations WHOIS (registrar, dates, contacts)",
-                "Résolution DNS et analyse des enregistrements (A, MX, TXT, NS, SOA)",
-                "Vérification SPF, DKIM, DMARC",
-                "Test de transfert de zone DNS",
-                "Découverte de sous-domaines par dictionnaire",
+            ("01", "Reconnaissance", C["sev_info"], [
+                "Collecte WHOIS — registrar, contacts, dates d'expiration",
+                "Analyse DNS complète — A, AAAA, MX, NS, TXT, CNAME, SOA",
+                "Vérification SPF / DKIM / DMARC",
+                "Test de transfert de zone (AXFR) sur chaque serveur NS",
+                "Brute-force de 60+ sous-domaines courants",
             ]),
-            ("Phase 2 — Scan réseau", [
-                "Scan de ports TCP 1-10000 avec détection d'état",
-                "Identification des services et versions via Nmap (-sV)",
-                "Fingerprinting du système d'exploitation (-O)",
-                "Exécution des scripts NSE par défaut (-sC)",
-                "Capture de banners de services",
+            ("02", "Scan Réseau", C["sev_medium"], [
+                "Scan TCP 1-10000 parallèle (200 threads) + banner grabbing",
+                "Nmap -sV : détection précise des versions de services",
+                "Nmap -O : fingerprinting du système d'exploitation",
+                "Nmap -sC : exécution des scripts NSE par défaut",
             ]),
-            ("Phase 3 — Analyse des vulnérabilités", [
-                "Exécution des scripts NSE de vulnérabilités (vuln, ssl-heartbleed, smb-vuln-ms17-010...)",
-                "Analyse des headers HTTP de sécurité",
-                "Audit de la configuration SSL/TLS",
-                "Recherche de CVEs dans la base NVD et base locale",
-                "Détection de configurations dangereuses",
+            ("03", "Analyse des Vulnérabilités", C["sev_high"], [
+                "Scripts NSE : vuln, ssl-heartbleed, smb-vuln-ms17-010, http-shellshock...",
+                "Analyse des 9 headers de sécurité HTTP (CSP, HSTS, X-Frame-Options...)",
+                "Audit SSL/TLS — protocoles obsolètes, cipher suites faibles, certificat",
+                "Lookup CVE via NVD API v2 + base locale intégrée",
+                "Détection de configurations dangereuses et données exposées dans le HTML",
             ]),
-            ("Phase 4 — Rapport", [
-                "Agrégation et déduplication des findings",
-                "Calcul du score de risque global (pondération par sévérité CVSS)",
-                "Rédaction des recommandations priorisées",
-                "Génération du rapport PDF",
+            ("04", "Rapport", C["sev_low"], [
+                "Agrégation et déduplication des findings toutes sources",
+                "Calcul du score de risque global (pondération CVSS)",
+                "Rédaction des recommandations priorisées par sévérité",
+                "Génération du rapport PDF professionnel",
             ]),
         ]
 
-        for phase_title, steps in phases:
-            elements.append(Paragraph(phase_title, self.styles["subsection_title"]))
+        for num, title, col, steps in phases:
+            ph = Table(
+                [[
+                    Paragraph(f'<font color="{col.hexval()}"><b>{num}</b></font>',
+                              S("pn", fontSize=14, fontName="Helvetica-Bold",
+                                alignment=TA_CENTER, leading=18)),
+                    Paragraph(title, S("pt", fontSize=11, fontName="Helvetica-Bold",
+                               textColor=C["text"], leading=16)),
+                ]],
+                colWidths=[14*mm, W - 44*mm]
+            )
+            ph.setStyle(TableStyle([
+                ("BACKGROUND",    (0, 0), (0, -1), C["surface2"]),
+                ("BACKGROUND",    (1, 0), (1, -1), C["surface"]),
+                ("TOPPADDING",    (0, 0), (-1, -1), 8),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+                ("LEFTPADDING",   (0, 0), (-1, -1), 8),
+                ("BOX",           (0, 0), (-1, -1), 0.5, C["border"]),
+                ("LINEAFTER",     (0, 0), (0, -1), 1.5, col),
+                ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+            ]))
+            e.append(ph)
             for step in steps:
-                elements.append(Paragraph(
-                    f"  ▸  {step}",
-                    ParagraphStyle("step", fontSize=9, fontName="Helvetica", textColor=TEXT_SECONDARY,
-                                   leading=14, leftIndent=10, spaceAfter=1)
+                e.append(Paragraph(
+                    f'  <font color="{col.hexval()}">▸</font>  {step}',
+                    S("st", fontSize=8.5, textColor=C["text2"],
+                      leading=14, leftIndent=10, spaceAfter=1)
                 ))
-            elements.append(Spacer(1, 4*mm))
+            e.append(Spacer(1, 4*mm))
 
-        # Outils utilisés
-        elements.append(Paragraph("Outils et technologies utilisés", self.styles["subsection_title"]))
+        e.append(Paragraph("Outils & Librairies", STYLES["subsection"]))
         tools = [
-            ("Nmap", "Scanner réseau — détection de ports, services, OS, vulnérabilités"),
-            ("python-nmap", "Interface Python pour Nmap"),
-            ("dnspython", "Bibliothèque Python pour les requêtes DNS"),
-            ("requests", "Client HTTP pour l'analyse des applications web"),
-            ("ssl (Python stdlib)", "Analyse SSL/TLS et certificats"),
-            ("python-whois", "Récupération des informations WHOIS"),
-            ("NVD API v2", "Base de données nationale des vulnérabilités (NIST)"),
-            ("ReportLab", "Génération des rapports PDF"),
+            ("Nmap",         "Scanner réseau — ports, services, OS, vulnérabilités NSE"),
+            ("python-nmap",  "Interface Python pour Nmap"),
+            ("dnspython",    "Requêtes DNS (records, zone transfer, DMARC...)"),
+            ("requests",     "Client HTTP — analyse des applications web"),
+            ("ssl",          "Analyse SSL/TLS et certificats (stdlib Python)"),
+            ("python-whois", "Lookups WHOIS"),
+            ("NVD API v2",   "Base nationale des vulnérabilités — NIST"),
+            ("ReportLab",    "Génération des rapports PDF"),
         ]
-        tools_rows = [[
-            Paragraph("Outil", self.styles["table_header"]),
-            Paragraph("Rôle", self.styles["table_header"]),
-        ]]
+        hdr  = [Paragraph(t, STYLES["th"]) for t in ["Outil", "Rôle"]]
+        rows = [hdr]
         for tool, role in tools:
-            tools_rows.append([
-                Paragraph(tool, ParagraphStyle("tn", fontSize=8, fontName="Courier", textColor=ACCENT_CYAN)),
-                Paragraph(role, self.styles["table_cell"]),
+            rows.append([
+                Paragraph(tool, S("tn", fontSize=8, fontName="Courier",
+                           textColor=C["accent"], leading=11)),
+                Paragraph(role, STYLES["td"]),
             ])
-        tools_table = Table(tools_rows, colWidths=[55*mm, 120*mm])
-        tools_table.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), ACCENT_BLUE),
-            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [DARK_SURFACE, HexColor("#1A2030")]),
-            ("TOPPADDING", (0, 0), (-1, -1), 5),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-            ("LEFTPADDING", (0, 0), (-1, -1), 8),
-            ("GRID", (0, 0), (-1, -1), 0.3, TEXT_MUTED),
-            ("BOX", (0, 0), (-1, -1), 1, ACCENT_BLUE),
-        ]))
-        elements.append(tools_table)
+        t = Table(rows, colWidths=[40*mm, 125*mm])
+        t.setStyle(tbl_style(C["accent2"]))
+        e.append(t)
 
-        elements.append(Spacer(1, 10*mm))
-        elements.append(HRFlowable(width="100%", thickness=0.5, color=TEXT_MUTED, spaceAfter=8))
-        elements.append(Paragraph(
-            "Ce rapport a été généré automatiquement par VulnScan Pro v1.0. "
-            "Il ne remplace pas un audit de sécurité manuel complet réalisé par des experts certifiés. "
+        e += [Spacer(1, 10*mm),
+              HRFlowable(width="100%", thickness=0.5, color=C["border"]),
+              Spacer(1, 4*mm)]
+        e.append(Paragraph(
+            "Ce rapport a été généré automatiquement par VulnScan Pro v1.0 (by hawkz). "
+            "Il ne remplace pas un audit manuel complet conduit par des experts certifiés. "
             "Les résultats doivent être validés et interprétés en contexte avant toute action corrective.",
-            self.styles["disclaimer"]
+            STYLES["disclaimer"]
         ))
-
-        return elements
-
-    # ─── HELPERS ─────────────────────────────────────────────────────────────
-
-    def _get_all_findings(self) -> list:
-        all_findings = []
-        for module_name, module_data in self.results.get("modules", {}).items():
-            if isinstance(module_data, dict):
-                for finding in module_data.get("findings", []):
-                    finding["_module"] = module_name
-                    all_findings.append(finding)
-        # Trier par sévérité
-        order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "INFO": 4}
-        all_findings.sort(key=lambda x: order.get(x.get("severity", "INFO"), 5))
-        return all_findings
-
-    def _count_total_findings(self) -> int:
-        return len(self._get_all_findings())
-
-    def _count_by_severity(self) -> dict:
-        counts = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0, "INFO": 0}
-        for finding in self._get_all_findings():
-            sev = finding.get("severity", "INFO")
-            if sev in counts:
-                counts[sev] += 1
-        return counts
+        return e
