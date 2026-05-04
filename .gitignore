@@ -1,0 +1,50 @@
+# ── Rapports générés ──────────────────────────────────────────────────────────
+output/*
+!output/.gitkeep
+*.pdf
+*.json
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+venv_build/
+.env
+.venv
+ENV/
+pip-log.txt
+pip-delete-this-directory.txt
+.eggs/
+*.egg-info/
+*.egg
+dist/
+build/
+*.spec
+
+# ── IDEs ──────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ── Logs & tmp ────────────────────────────────────────────────────────────────
+*.log
+*.tmp
+*.bak
+.cache/
+
+# ── Sécurité — ne jamais committer ────────────────────────────────────────────
+.env
+*.key
+*.pem
+*.p12
+secrets.py
+config_local.py
