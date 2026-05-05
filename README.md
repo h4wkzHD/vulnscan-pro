@@ -52,7 +52,7 @@ vulnscan-pro 10.0.0.1 --ports 1-65535
 Une fois le scan terminé, le rapport PDF est généré automatiquement dans :
 
 ```
-C:\Users\<VotreNom>\Downloads\vulnscan_reports\
+C:\Users\<VotreNom>\Downloads\output\
 ```
 
 Tu trouveras ton rapport dans tes dossier Téléchargement --> Output . 📂
