@@ -309,6 +309,8 @@ def main():
     args = parse_args()
     target = args.target.strip()
 
+    # Toujours convertir en chemin absolu pour éviter les chemins relatifs
+    args.output = os.path.abspath(args.output)
     os.makedirs(args.output, exist_ok=True)
 
     console.print(Panel(
@@ -316,6 +318,7 @@ def main():
         f"[bold]Entreprise:[/bold] {args.company}\n"
         f"[bold]Auditeur:[/bold] {args.auditor}\n"
         f"[bold]Ports:[/bold] {args.ports}\n"
+        f"[bold]Rapport:[/bold] {args.output}\n"
         f"[bold]Date:[/bold] {datetime.now().strftime('%d/%m/%Y %H:%M')}",
         title="[bold cyan]Paramètres du scan[/bold cyan]",
         border_style="cyan"
@@ -353,7 +356,13 @@ def main():
     try:
         generator = ReportGenerator(results, output_dir=args.output)
         pdf_path = generator.generate()
-        console.print(f"\n  ✅ [bold green]Rapport généré:[/bold green] [underline]{pdf_path}[/underline]\n")
+        pdf_path_abs = os.path.abspath(pdf_path)
+        console.print(f"\n  ✅ [bold green]Rapport généré:[/bold green]")
+        console.print(f"     [underline cyan]{pdf_path_abs}[/underline cyan]\n")
+        # Ouvrir automatiquement le dossier de sortie sur Windows
+        if platform.system() == "Windows":
+            import subprocess
+            subprocess.Popen(f'explorer /select,"{pdf_path_abs}"')
     except Exception as e:
         console.print(f"\n  [red]❌ Erreur lors de la génération du rapport: {e}[/red]\n")
         import traceback
