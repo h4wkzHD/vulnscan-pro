@@ -55,7 +55,7 @@ Une fois le scan terminé, le rapport PDF est généré automatiquement dans :
 C:\Users\<VotreNom>\Downloads\vulnscan_reports\
 ```
 
-Le dossier s'ouvre automatiquement à la fin du scan avec le rapport sélectionné. 📂
+Tu trouveras ton rapport dans tes dossier Téléchargement --> Output . 📂
 
 ---
 
@@ -117,29 +117,6 @@ Le rapport généré est de qualité professionnelle (dark mode, style cabinet d
 9. **CVEs identifiées** — tableau trié par score CVSS
 10. **Recommandations prioritaires** — top 20 actions immédiates + bonnes pratiques
 11. **Méthodologie** — phases, outils utilisés
-
----
-
-## Structure du projet
-
-```
-vulnscan/
-├── main.py                  # Point d'entrée principal
-├── requirements.txt         # Dépendances Python
-├── install.sh               # Script d'installation Debian/Ubuntu/Kali
-├── build.sh                 # Script de build exécutable standalone
-├── README.md                # Ce fichier
-└── modules/
-    ├── network_scanner.py   # Nmap — services, OS, versions
-    ├── port_scanner.py      # Scan de ports TCP + banner grabbing
-    ├── http_scanner.py      # Headers HTTP, CORS, cookies, technologies
-    ├── ssl_scanner.py       # Certificat SSL/TLS, protocoles, ciphers
-    ├── dns_scanner.py       # DNS, zone transfer, SPF/DKIM/DMARC
-    ├── whois_scanner.py     # WHOIS, résolution DNS, reverse DNS
-    ├── cve_lookup.py        # Recherche CVE (NVD API + base locale)
-    ├── vuln_scanner.py      # Scripts NSE Nmap de vulnérabilités
-    └── report_generator.py  # Génération du rapport PDF
-```
 
 ---
 
