@@ -3,6 +3,7 @@
 Outil d'audit de sécurité automatisé — scan de vulnérabilités et génération de rapports PDF professionnels.
 
 > **by hawkz** — v1.0
+<img width="651" height="177" alt="image" src="https://github.com/user-attachments/assets/d563d7ef-2bbc-4aea-bb63-6af0a5fbaf9e" />
 
 ---
 
