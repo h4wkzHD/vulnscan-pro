@@ -32,6 +32,10 @@ cd "$env:USERPROFILE\Downloads"
 ```powershell
 vulnscan-pro 192.168.1.1
 ```
+ou 
+```powershell
+vulnscan 192.168.1.1
+```
 
 > 💡 Remplacer `192.168.1.1` par l'IP ou l'URL cible.
 
